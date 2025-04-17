@@ -1,7 +1,7 @@
 {
   "name": "sync-vscode",
-  "displayName": "FTP Auto Sync",
-  "description": "変更されたファイルを自動的にFTPサーバーへアップロードする拡張機能",
+  "displayName": "SFTP Auto Sync",
+  "description": "変更されたファイルを自動的にSFTPサーバーへアップロードする拡張機能",
   "version": "0.1.0",
   "engines": {
     "vscode": "^1.60.0"
@@ -19,39 +19,39 @@
     "commands": [
       {
         "command": "ftp-sync.startSync",
-        "title": "FTP Sync: 同期を開始"
+        "title": "SFTP Sync: 同期を開始"
       },
       {
         "command": "ftp-sync.stopSync",
-        "title": "FTP Sync: 同期を停止"
+        "title": "SFTP Sync: 同期を停止"
       },
       {
         "command": "ftp-sync.configureSettings",
-        "title": "FTP Sync: FTP設定"
+        "title": "SFTP Sync: SFTP設定"
       }
     ],
     "configuration": {
-      "title": "FTP Sync",
+      "title": "SFTP Sync",
       "properties": {
         "ftpSync.host": {
           "type": "string",
           "default": "",
-          "description": "FTPサーバーのホスト名"
+          "description": "SFTPサーバーのホスト名"
         },
         "ftpSync.port": {
           "type": "number",
-          "default": 21,
-          "description": "FTPサーバーのポート番号"
+          "default": 22,
+          "description": "SFTPサーバーのポート番号"
         },
         "ftpSync.user": {
           "type": "string",
           "default": "",
-          "description": "FTPユーザー名"
+          "description": "SFTPユーザー名"
         },
         "ftpSync.password": {
           "type": "string",
           "default": "",
-          "description": "FTPパスワード"
+          "description": "SFTPパスワード"
         },
         "ftpSync.remotePath": {
           "type": "string",
@@ -78,6 +78,7 @@
     "@types/glob": "^7.1.4",
     "@types/mocha": "^10.0.10",
     "@types/node": "16.x",
+    "@types/ssh2": "^1.15.5",
     "@types/vscode": "^1.60.0",
     "@typescript-eslint/eslint-plugin": "^5.1.0",
     "@typescript-eslint/parser": "^5.1.0",
@@ -87,6 +88,7 @@
   },
   "dependencies": {
     "basic-ftp": "^5.0.2",
-    "chokidar": "^3.5.3"
+    "chokidar": "^3.5.3",
+    "ssh2": "^1.16.0"
   }
 }

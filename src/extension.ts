@@ -1,14 +1,14 @@
-// FTP自動同期拡張機能
+// SFTP自動同期拡張機能
 
 // 必要なパッケージのインポート
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as ftp from 'basic-ftp';
+import { Client } from 'ssh2';
 import * as chokidar from 'chokidar';
 
-// FTP接続設定インターフェース
-interface FtpConfig {
+// SFTP接続設定インターフェース
+interface SftpConfig {
 	host: string;
 	port: number;
 	user: string;
@@ -19,11 +19,10 @@ interface FtpConfig {
 
 // 拡張機能のアクティベーション関数
 export function activate(context: vscode.ExtensionContext) {
-	console.log('FTP Sync拡張機能がアクティブになりました');
+	console.log('SFTP Sync拡張機能がアクティブになりました');
 
-	// FTPクライアントの初期化
-	const ftpClient = new ftp.Client();
-	ftpClient.ftp.verbose = true;
+	// SFTPクライアントの初期化
+	const sftpClient = new Client();
 
 	// 監視中のファイル変更を保持するセット
 	let changedFiles = new Set<string>();
@@ -43,14 +42,14 @@ export function activate(context: vscode.ExtensionContext) {
 
 		// 設定が完了しているか確認
 		if (!config.host || !config.user) {
-			vscode.window.showErrorMessage('FTP設定が不完全です。設定を確認してください');
+			vscode.window.showErrorMessage('SFTP設定が不完全です。設定を確認してください');
 			vscode.commands.executeCommand('ftp-sync.configureSettings');
 			return;
 		}
 
 		try {
 			await startWatching();
-			vscode.window.showInformationMessage('FTP同期を開始しました');
+			vscode.window.showInformationMessage('SFTP同期を開始しました');
 		} catch (error) {
 			vscode.window.showErrorMessage(`同期の開始に失敗しました: ${error}`);
 		}
@@ -58,31 +57,31 @@ export function activate(context: vscode.ExtensionContext) {
 
 	let stopSyncCommand = vscode.commands.registerCommand('ftp-sync.stopSync', () => {
 		stopWatching();
-		vscode.window.showInformationMessage('FTP同期を停止しました');
+		vscode.window.showInformationMessage('SFTP同期を停止しました');
 	});
 
 	let configureCommand = vscode.commands.registerCommand('ftp-sync.configureSettings', async () => {
-		// FTP設定の入力
+		// SFTP設定の入力
 		const host = await vscode.window.showInputBox({
-			prompt: 'FTPホスト名を入力してください',
+			prompt: 'SFTPホスト名を入力してください',
 			value: config.host || ''
 		});
 		if (!host) return;
 
 		const port = await vscode.window.showInputBox({
-			prompt: 'FTPポート番号を入力してください',
-			value: config.port?.toString() || '21'
+			prompt: 'SFTPポート番号を入力してください',
+			value: config.port?.toString() || '22'
 		});
 		if (!port) return;
 
 		const user = await vscode.window.showInputBox({
-			prompt: 'FTPユーザー名を入力してください',
+			prompt: 'SFTPユーザー名を入力してください',
 			value: config.user || ''
 		});
 		if (!user) return;
 
 		const password = await vscode.window.showInputBox({
-			prompt: 'FTPパスワードを入力してください',
+			prompt: 'SFTPパスワードを入力してください',
 			value: config.password || '',
 			password: true
 		});
@@ -111,7 +110,7 @@ export function activate(context: vscode.ExtensionContext) {
 		};
 
 		saveConfig(config);
-		vscode.window.showInformationMessage('FTP設定を保存しました');
+		vscode.window.showInformationMessage('SFTP設定を保存しました');
 	});
 
 	// ファイル監視を開始する関数
@@ -123,39 +122,59 @@ export function activate(context: vscode.ExtensionContext) {
 
 		const workspaceRoot = workspaceFolders[0].uri.fsPath;
 
-		// FTPクライアントに接続
+		// SFTPクライアントに接続
 		try {
-			await ftpClient.access({
+			sftpClient.connect({
 				host: config.host,
 				port: config.port,
-				user: config.user,
-				password: config.password,
-				secure: false
+				username: config.user,
+				password: config.password
 			});
 
-			// リモートディレクトリに移動
-			await ftpClient.ensureDir(config.remotePath);
+			sftpClient.on('ready', () => {
+				console.log('SFTP接続に成功しました');
+
+				// リモートディレクトリに移動
+				sftpClient.sftp((err: Error | undefined, sftp: any) => {
+					if (err) {
+						throw new Error(`SFTPエラー: ${err}`);
+					}
+					sftp.mkdir(config.remotePath, { recursive: true }, (err: Error) => {
+						if (err) {
+							throw new Error(`リモートディレクトリ作成エラー: ${err.message}`);
+						}
+
+						// ファイル監視の設定
+						const watcher = chokidar.watch(workspaceRoot, {
+							ignored: /(^|[\/\\])\../, // 隠しファイルを無視
+							persistent: true
+						});
+
+						// ファイル変更イベントのハンドリング
+						watcher
+							.on('add', path => addChangedFile(path))
+							.on('change', path => addChangedFile(path))
+							.on('unlink', path => {
+								// ファイル削除の処理（将来的な拡張のため）
+								console.log(`File ${path} has been removed`);
+							});
+
+						// 定期的な同期処理の開始
+						syncTimerId = setInterval(syncChangedFiles, config.updateInterval * 1000);
+					});
+				});
+			});
+
+			sftpClient.on('error', (err) => {
+				throw new Error(`SFTP接続エラー: ${err}`);
+			});
+
+			sftpClient.on('end', () => {
+				console.log('SFTP接続を閉じました');
+			});
 		} catch (error) {
-			throw new Error(`FTP接続に失敗しました: ${error}`);
+			throw new Error(`SFTP接続に失敗しました: ${error}`);
 		}
-
-		// ファイル監視の設定
-		const watcher = chokidar.watch(workspaceRoot, {
-			ignored: /(^|[\/\\])\../, // 隠しファイルを無視
-			persistent: true
-		});
-
-		// ファイル変更イベントのハンドリング
-		watcher
-			.on('add', path => addChangedFile(path))
-			.on('change', path => addChangedFile(path))
-			.on('unlink', path => {
-				// ファイル削除の処理（将来的な拡張のため）
-				console.log(`File ${path} has been removed`);
-			});
-
-		// 定期的な同期処理の開始
-		syncTimerId = setInterval(syncChangedFiles, config.updateInterval * 1000);
 	}
 
 	// 監視を停止する関数
@@ -165,8 +184,8 @@ export function activate(context: vscode.ExtensionContext) {
 			syncTimerId = undefined;
 		}
 
-		// FTPクライアントを閉じる
-		ftpClient.close();
+		// SFTPクライアントを閉じる
+		sftpClient.end();
 
 		changedFiles.clear();
 	}
@@ -202,37 +221,44 @@ export function activate(context: vscode.ExtensionContext) {
 		const workspaceRoot = workspaceFolders[0].uri.fsPath;
 
 		try {
-			// FTPクライアントが接続されていない場合は再接続
-			if (!ftpClient.closed) {
-				await ftpClient.access({
+			// SFTPクライアントが接続されていない場合は再接続
+			// @ts-ignore
+			if (!sftpClient._channel) {
+				sftpClient.connect({
 					host: config.host,
 					port: config.port,
-					user: config.user,
-					password: config.password,
-					secure: false
+					username: config.user,
+					password: config.password
 				});
 			}
 
 			// 変更のあったファイルをアップロード
-			for (const file of changedFiles) {
-				try {
-					const relativePath = path.relative(workspaceRoot, file);
-					const remoteFilePath = path.join(config.remotePath, relativePath).replace(/\\/g, '/');
-					const remoteDir = path.dirname(remoteFilePath).replace(/\\/g, '/');
-
-					// リモートディレクトリの存在確認と作成
-					await ftpClient.ensureDir(remoteDir);
-
-					// ファイルのアップロード
-					await ftpClient.uploadFrom(file, remoteFilePath);
-					console.log(`Uploaded: ${file} -> ${remoteFilePath}`);
-
-					// 成功したらセットから削除
-					changedFiles.delete(file);
-				} catch (error) {
-					console.error(`Failed to upload ${file}: ${error}`);
+			sftpClient.sftp((err: Error | undefined, sftp: any) => {
+				if (err) {
+					console.error(`SFTPエラー: ${err}`);
+					vscode.window.showErrorMessage(`同期エラー: ${err}`);
+					return;
 				}
-			}
+
+				for (const file of changedFiles) {
+					try {
+						const relativePath = path.relative(workspaceRoot, file);
+						const remoteFilePath = path.join(config.remotePath, relativePath).replace(/\\/g, '/');
+						// ファイルのアップロード
+						sftp.fastPut(file, remoteFilePath, (err: Error) => {
+							if (err) {
+								console.error(`Failed to upload ${file}: ${err.message}`);
+							} else {
+								console.log(`Uploaded: ${file} -> ${remoteFilePath}`);
+								// 成功したらセットから削除
+								changedFiles.delete(file);
+							}
+						});
+					} catch (error) {
+						console.error(`Failed to upload ${file}: ${error}`);
+					}
+				}
+			});
 		} catch (error) {
 			console.error(`Sync error: ${error}`);
 			vscode.window.showErrorMessage(`同期エラー: ${error}`);
@@ -240,11 +266,11 @@ export function activate(context: vscode.ExtensionContext) {
 	}
 
 	// 設定の読み込み
-	function loadConfig(): FtpConfig {
+	function loadConfig(): SftpConfig {
 		const config = vscode.workspace.getConfiguration('ftpSync');
 		return {
 			host: config.get('host') || '',
-			port: config.get('port') || 21,
+			port: config.get('port') || 22,
 			user: config.get('user') || '',
 			password: config.get('password') || '',
 			remotePath: config.get('remotePath') || '/',
@@ -253,7 +279,7 @@ export function activate(context: vscode.ExtensionContext) {
 	}
 
 	// 設定の保存
-	function saveConfig(ftpConfig: FtpConfig) {
+	function saveConfig(ftpConfig: SftpConfig) {
 		const config = vscode.workspace.getConfiguration('ftpSync');
 		config.update('host', ftpConfig.host, vscode.ConfigurationTarget.Global);
 		config.update('port', ftpConfig.port, vscode.ConfigurationTarget.Global);
@@ -268,5 +294,5 @@ export function activate(context: vscode.ExtensionContext) {
 
 // 拡張機能の非アクティブ化関数
 export function deactivate() {
-	console.log('FTP Sync拡張機能が非アクティブになりました');
+	console.log('SFTP Sync拡張機能が非アクティブになりました');
 }
