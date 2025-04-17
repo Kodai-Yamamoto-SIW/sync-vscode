@@ -1,0 +1,92 @@
+{
+  "name": "sync-vscode",
+  "displayName": "FTP Auto Sync",
+  "description": "変更されたファイルを自動的にFTPサーバーへアップロードする拡張機能",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:ftp-sync.startSync",
+    "onCommand:ftp-sync.stopSync",
+    "onCommand:ftp-sync.configureSettings"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "ftp-sync.startSync",
+        "title": "FTP Sync: 同期を開始"
+      },
+      {
+        "command": "ftp-sync.stopSync",
+        "title": "FTP Sync: 同期を停止"
+      },
+      {
+        "command": "ftp-sync.configureSettings",
+        "title": "FTP Sync: FTP設定"
+      }
+    ],
+    "configuration": {
+      "title": "FTP Sync",
+      "properties": {
+        "ftpSync.host": {
+          "type": "string",
+          "default": "",
+          "description": "FTPサーバーのホスト名"
+        },
+        "ftpSync.port": {
+          "type": "number",
+          "default": 21,
+          "description": "FTPサーバーのポート番号"
+        },
+        "ftpSync.user": {
+          "type": "string",
+          "default": "",
+          "description": "FTPユーザー名"
+        },
+        "ftpSync.password": {
+          "type": "string",
+          "default": "",
+          "description": "FTPパスワード"
+        },
+        "ftpSync.remotePath": {
+          "type": "string",
+          "default": "/",
+          "description": "リモートの基準パス"
+        },
+        "ftpSync.updateInterval": {
+          "type": "number",
+          "default": 10,
+          "description": "同期の間隔（秒）"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/glob": "^7.1.4",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "16.x",
+    "@types/vscode": "^1.60.0",
+    "@typescript-eslint/eslint-plugin": "^5.1.0",
+    "@typescript-eslint/parser": "^5.1.0",
+    "eslint": "^8.1.0",
+    "glob": "^7.1.7",
+    "typescript": "^4.4.4"
+  },
+  "dependencies": {
+    "basic-ftp": "^5.0.2",
+    "chokidar": "^3.5.3"
+  }
+}
