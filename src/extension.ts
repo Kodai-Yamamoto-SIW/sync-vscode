@@ -32,6 +32,9 @@ export function activate(context: vscode.ExtensionContext) {
   // タイマーID
   let syncTimerId: NodeJS.Timeout | undefined;
 
+  // 同時実行を防ぐフラグ
+  let isSyncing = false;
+
   // 設定の読み込み
   let config = loadConfig();
 
@@ -76,6 +79,12 @@ export function activate(context: vscode.ExtensionContext) {
     });
     if (!port) return;
 
+    const portNumber = parseInt(port, 10);
+    if (isNaN(portNumber) || portNumber <= 0) {
+      vscode.window.showErrorMessage('無効なポート番号です');
+      return;
+    }
+
     const user = await vscode.window.showInputBox({
       prompt: 'SFTPユーザー名を入力してください',
       value: config.user || ''
@@ -101,14 +110,20 @@ export function activate(context: vscode.ExtensionContext) {
     });
     if (!updateInterval) return;
 
+    const intervalNumber = parseInt(updateInterval, 10);
+    if (isNaN(intervalNumber) || intervalNumber <= 0) {
+      vscode.window.showErrorMessage('無効な同期間隔です');
+      return;
+    }
+
     // 設定の保存
     config = {
       host,
-      port: parseInt(port),
+      port: portNumber,
       user,
       password,
-      remotePath_posix: remotePath,
-      updateInterval: parseInt(updateInterval)
+      remotePath_posix: toPosixPath(pathUtil.posix.normalize(remotePath)),
+      updateInterval: intervalNumber
     };
 
     saveConfig(config);
@@ -191,27 +206,27 @@ export function activate(context: vscode.ExtensionContext) {
 
       // ファイル監視の設定
       watcher = chokidar.watch(workspaceRoot, {
-        ignored: /(^|[\/\\])\../, // 隠しファイルを無視
+        ignored: [
+          /(^|[\/\\])\../, // 隠しファイルを無視
+          '**/node_modules/**',
+          '**/out/**'
+        ],
         persistent: true
       });
 
-      // ファイル変更イベントのハンドリング
-      watcher
-        .on('all', (eventName, path) => {
-          const relativePath_posix = toPosixPath(pathUtil.relative(workspaceRoot, path));
-          addChangedFile(relativePath_posix, eventName as 'add' | 'addDir' | 'change' | 'unlink' | 'unlinkDir');
-        });
+      // 必要なイベントだけをハンドリング
+      const validEvents = new Set(['add', 'addDir', 'change', 'unlink', 'unlinkDir']);
+      watcher.on('all', (eventName, filePath) => {
+        if (!validEvents.has(eventName)) return;
+        const relativePath_posix = toPosixPath(pathUtil.relative(workspaceRoot, filePath));
+        addChangedFile(relativePath_posix, eventName as 'add' | 'addDir' | 'change' | 'unlink' | 'unlinkDir');
+      });
 
       console.log('ファイル監視を開始しました');
 
       // 監視を停止する関数
       watcher.on('ready', () => {
         console.log('Watcher is ready');
-      });
-      // 監視が終了したら、同期を停止
-      watcher.on('end', async () => {
-        console.log('Watcher has ended');
-        await stopWatching();
       });
       // 監視がエラーになったら、同期を停止
       watcher.on('error', async (error) => {
@@ -390,10 +405,13 @@ export function activate(context: vscode.ExtensionContext) {
     async function walk(dir: string) {
       const items = fs.readdirSync(dir);
       for (const item of items) {
+        // 隠しファイル/ディレクトリやビルド成果物を無視
+        if (item.startsWith('.') || item === 'node_modules' || item === 'out') {
+          continue;
+        }
         const itemPath = pathUtil.join(dir, item);
         const relativePath = pathUtil.relative(workspaceRoot, itemPath);
-        files.push(relativePath);
-
+        files.push(toPosixPath(relativePath));
         if (fs.statSync(itemPath).isDirectory()) {
           await walk(itemPath);
         }
@@ -409,9 +427,8 @@ export function activate(context: vscode.ExtensionContext) {
     return new Promise((resolve, reject) => {
       sftp.stat(remoteFilePath, (statErr: Error | undefined, stats: Stats) => {
         if (statErr) {
-          if (statErr.message.includes('No such file')) {
-            console.log(`File or directory does not exist: ${remoteFilePath}. Treating as success.`);
-            vscode.window.showInformationMessage(`削除成功(存在しないため): ${remoteFilePath}`);
+          if ((statErr as any).code === 'ENOENT' || statErr.message.includes('No such file')) {
+            console.log(`File or directory not found, skipping delete: ${remoteFilePath}`);
             resolve();
           } else {
             console.error(`Failed to stat ${remoteFilePath}: ${statErr?.message}`);
@@ -474,104 +491,112 @@ export function activate(context: vscode.ExtensionContext) {
 
   // 変更されたファイルを同期する関数
   async function syncChangedFiles() {
-    console.log('syncChangedFiles 関数が実行されました');
-
-    if (changedRelativePaths_posix.size === 0) return;
-
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders) return;
-
-    const workspaceRoot = workspaceFolders[0].uri.fsPath;
-
-    const sftp = await getSftpClient();
-
-    // 変更を種類ごとに分類
-    const addDirPaths_posix: string[] = [];
-    const addOrChangePaths_posix: string[] = [];
-    const fileDeletionPaths_posix: string[] = [];
-    const dirDeletionPaths_posix: string[] = [];
-
-    for (const [changedRelativePath_posix, type] of changedRelativePaths_posix) {
-      switch (type) {
-        case 'addDir':
-          addDirPaths_posix.push(changedRelativePath_posix);
-          break;
-        case 'add':
-        case 'change':
-          addOrChangePaths_posix.push(changedRelativePath_posix);
-          break;
-        case 'unlink':
-          fileDeletionPaths_posix.push(changedRelativePath_posix);
-          break;
-        case 'unlinkDir':
-          dirDeletionPaths_posix.push(changedRelativePath_posix);
-          break;
-        default:
-          console.error(`Unknown change type: ${type}`);
-          break;
-      }
+    if (isSyncing) {
+      console.log('前回の同期処理がまだ実行中です。スキップします');
+      return;
     }
-
+    isSyncing = true;
     try {
-      // 1. ファイル削除を先に実行
-      for (const relativePath_posix of fileDeletionPaths_posix) {
-        const remoteFilePath_posix = pathUtil.posix.join(config.remotePath_posix, relativePath_posix);
-        try {
-          await handleDelete(sftp, remoteFilePath_posix);
-          changedRelativePaths_posix.delete(relativePath_posix);
-        } catch (error) {
-          console.error(`Failed to delete file ${remoteFilePath_posix}: ${error}`);
+      console.log('syncChangedFiles 関数が実行されました');
+      if (changedRelativePaths_posix.size === 0) return;
+
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      if (!workspaceFolders) return;
+
+      const workspaceRoot = workspaceFolders[0].uri.fsPath;
+
+      const sftp = await getSftpClient();
+
+      // 変更を種類ごとに分類
+      const addDirPaths_posix: string[] = [];
+      const addOrChangePaths_posix: string[] = [];
+      const fileDeletionPaths_posix: string[] = [];
+      const dirDeletionPaths_posix: string[] = [];
+
+      for (const [changedRelativePath_posix, type] of changedRelativePaths_posix) {
+        switch (type) {
+          case 'addDir':
+            addDirPaths_posix.push(changedRelativePath_posix);
+            break;
+          case 'add':
+          case 'change':
+            addOrChangePaths_posix.push(changedRelativePath_posix);
+            break;
+          case 'unlink':
+            fileDeletionPaths_posix.push(changedRelativePath_posix);
+            break;
+          case 'unlinkDir':
+            dirDeletionPaths_posix.push(changedRelativePath_posix);
+            break;
+          default:
+            console.error(`Unknown change type: ${type}`);
+            break;
         }
       }
 
-      // 2. フォルダ削除を次に実行（深い階層から削除）
-      dirDeletionPaths_posix.sort((a, b) => b.length - a.length);
-      for (const relativePath_posix of dirDeletionPaths_posix) {
-        const remoteDirPath_posix = pathUtil.posix.join(config.remotePath_posix, relativePath_posix);
-        try {
-          await handleDelete(sftp, remoteDirPath_posix);
-          changedRelativePaths_posix.delete(relativePath_posix);
-        } catch (error) {
-          console.error(`Failed to delete directory ${remoteDirPath_posix}: ${error}`);
+      try {
+        // 1. ファイル削除を先に実行
+        for (const relativePath_posix of fileDeletionPaths_posix) {
+          const remoteFilePath_posix = pathUtil.posix.join(config.remotePath_posix, relativePath_posix);
+          try {
+            await handleDelete(sftp, remoteFilePath_posix);
+            changedRelativePaths_posix.delete(relativePath_posix);
+          } catch (error) {
+            console.error(`Failed to delete file ${remoteFilePath_posix}: ${error}`);
+          }
         }
-      }
 
-      // 3. フォルダ作成を次に実行（浅い階層から作成）
-      addDirPaths_posix.sort((a, b) => a.length - b.length);
-      for (const relativePath_posix of addDirPaths_posix) {
-        const remoteDirPath_posix = pathUtil.posix.join(config.remotePath_posix, relativePath_posix);
-        try {
-          await sftpMkdirRecursive(sftp, remoteDirPath_posix);
-          changedRelativePaths_posix.delete(relativePath_posix);
-        } catch (error) {
-          console.error(`Failed to create directory ${remoteDirPath_posix}: ${error}`);
+        // 2. フォルダ削除を次に実行（深い階層から削除）
+        dirDeletionPaths_posix.sort((a, b) => b.length - a.length);
+        for (const relativePath_posix of dirDeletionPaths_posix) {
+          const remoteDirPath_posix = pathUtil.posix.join(config.remotePath_posix, relativePath_posix);
+          try {
+            await handleDelete(sftp, remoteDirPath_posix);
+            changedRelativePaths_posix.delete(relativePath_posix);
+          } catch (error) {
+            console.error(`Failed to delete directory ${remoteDirPath_posix}: ${error}`);
+          }
         }
-      }
 
-      // 4. ファイルのアップロードを最後に実行
-      for (const relativePath_posix of addOrChangePaths_posix) {
-        const localFilePath = pathUtil.join(workspaceRoot, toLocalPath(relativePath_posix));
-        const remoteFilePath_posix = pathUtil.posix.join(config.remotePath_posix, relativePath_posix);
-        try {
-          await new Promise<void>((resolve, reject) => {
-            sftp.fastPut(localFilePath, remoteFilePath_posix, (err?: Error | null) => {
-              if (err) {
-                console.error(`Upload failed: ${localFilePath} -> ${remoteFilePath_posix} - ${err.message}`);
-                reject(err);
-              } else {
-                console.info(`Upload successful: ${localFilePath} -> ${remoteFilePath_posix}`);
-                changedRelativePaths_posix.delete(relativePath_posix);
-                resolve();
-              }
+        // 3. フォルダ作成を次に実行（浅い階層から作成）
+        addDirPaths_posix.sort((a, b) => a.length - b.length);
+        for (const relativePath_posix of addDirPaths_posix) {
+          const remoteDirPath_posix = pathUtil.posix.join(config.remotePath_posix, relativePath_posix);
+          try {
+            await sftpMkdirRecursive(sftp, remoteDirPath_posix);
+            changedRelativePaths_posix.delete(relativePath_posix);
+          } catch (error) {
+            console.error(`Failed to create directory ${remoteDirPath_posix}: ${error}`);
+          }
+        }
+
+        // 4. ファイルのアップロードを最後に実行
+        for (const relativePath_posix of addOrChangePaths_posix) {
+          const localFilePath = pathUtil.join(workspaceRoot, toLocalPath(relativePath_posix));
+          const remoteFilePath_posix = pathUtil.posix.join(config.remotePath_posix, relativePath_posix);
+          try {
+            await new Promise<void>((resolve, reject) => {
+              sftp.fastPut(localFilePath, remoteFilePath_posix, (err?: Error | null) => {
+                if (err) {
+                  console.error(`Upload failed: ${localFilePath} -> ${remoteFilePath_posix} - ${err.message}`);
+                  reject(err);
+                } else {
+                  console.info(`Upload successful: ${localFilePath} -> ${remoteFilePath_posix}`);
+                  changedRelativePaths_posix.delete(relativePath_posix);
+                  resolve();
+                }
+              });
             });
-          });
-        } catch (error) {
-          console.error(`Failed to upload ${localFilePath}: ${error}`);
+          } catch (error) {
+            console.error(`Failed to upload ${localFilePath}: ${error}`);
+          }
         }
+      } catch (error) {
+        console.error(`Sync error: ${error}`);
+        vscode.window.showErrorMessage(`同期エラー: ${error}`);
       }
-    } catch (error) {
-      console.error(`Sync error: ${error}`);
-      vscode.window.showErrorMessage(`同期エラー: ${error}`);
+    } finally {
+      isSyncing = false;
     }
   }
 
@@ -589,6 +614,8 @@ export function activate(context: vscode.ExtensionContext) {
   startStopStatusBarItem.show();
 
   context.subscriptions.push(startSyncCommand, stopSyncCommand, configureCommand, configStatusBarItem, startStopStatusBarItem);
+  // 拡張機能の非アクティブ化時にウォッチャーとSFTPをクリーンアップ
+  context.subscriptions.push({ dispose: () => { stopWatching().catch(err => console.error(`停止時のエラー: ${err}`)); } });
 }
 
 // 拡張機能の非アクティブ化関数
