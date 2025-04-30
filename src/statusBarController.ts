@@ -6,24 +6,14 @@ import { loadConfig } from './config';
  */
 export class StatusBarController implements vscode.Disposable {
   private syncItem: vscode.StatusBarItem;
-  private configItem: vscode.StatusBarItem;
   private state: 'idle' | 'running' = 'idle';
 
   constructor() {
     // 同期開始/停止ボタン（右側、優先度99）
     this.syncItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
-    // 初期設定が完了していなければ同期ボタンは非表示
-    const cfg = loadConfig();
-    if (cfg.host && cfg.user) {
-      this.updateSyncItem();
-      this.syncItem.show();
-    }
-    // 設定ボタン（右側、優先度100）
-    this.configItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    this.configItem.text = '$(gear) SFTP 設定';
-    this.configItem.command = 'ftp-sync.configureSettings';
-    this.configItem.tooltip = 'SFTP設定を開きます';
-    this.configItem.show();
+    // 設定の有無にかかわらず同期ボタンを表示
+    this.updateSyncItem();
+    this.syncItem.show();
   }
 
   /**
@@ -51,6 +41,5 @@ export class StatusBarController implements vscode.Disposable {
 
   public dispose() {
     this.syncItem.dispose();
-    this.configItem.dispose();
   }
 } 

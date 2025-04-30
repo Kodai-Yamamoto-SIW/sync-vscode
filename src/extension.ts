@@ -80,8 +80,12 @@ export function activate(context: vscode.ExtensionContext) {
     // 設定が完了しているか確認
     if (!config.host || !config.user) {
       vscode.window.showErrorMessage('SFTP設定が不完全です。設定を確認してください');
-      vscode.commands.executeCommand('ftp-sync.configureSettings');
-      return;
+      await vscode.commands.executeCommand('ftp-sync.configureSettings');
+      // 設定完了後に再読み込み
+      config = loadConfig();
+      if (!config.host || !config.user) {
+        return;
+      }
     }
 
     try {
