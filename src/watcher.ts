@@ -161,7 +161,8 @@ export async function startWatching() {
 
     watcher = chokidar.watch(workspaceRoot, {
       ignored: [/(^|[\\/])\../, '**/node_modules/**', '**/out/**'],
-      persistent: true
+      persistent: true,
+      ignorePermissionErrors: true // ← 追加
     });
     watcher.on('ready', () => console.log('Watcher is ready'));
     const valid = new Set(['add', 'addDir', 'change', 'unlink', 'unlinkDir']);
