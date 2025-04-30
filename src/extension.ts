@@ -8,6 +8,7 @@ import * as chokidar from 'chokidar';
 import { loadConfig, saveConfig } from './config';
 import { getSftpClient, closeSftpClient, safeGetSftpClient } from './sftpClient';
 import { showSftpError, toLocalPath, toPosixPath } from './utils';
+import { sftpMkdirRecursive, listRemoteFilesRecursiveRelative, listLocalFilesRecursiveRelative, handleDelete, deleteRemoteFile } from './sftpUtils';
 
 // SFTP接続設定インターフェース
 interface SftpConfig {
@@ -247,217 +248,6 @@ export function activate(context: vscode.ExtensionContext) {
     }
   }
 
-  // 新しい関数: 再帰的にディレクトリを作成する関数
-  async function sftpMkdirRecursive(sftp: SFTPWrapper, dirPath_posix: string): Promise<void> {
-    const rootPath_posix = pathUtil.parse(dirPath_posix).root;
-    const pathParts = dirPath_posix.slice(rootPath_posix.length).split(pathUtil.posix.sep);
-
-    let currentPath = rootPath_posix;
-    for (const pathPart of pathParts) {
-      currentPath = pathUtil.posix.join(currentPath, pathPart);
-      await new Promise<void>((resolve, reject) => {
-        sftp.stat(currentPath, (statErr: Error | undefined) => {
-          if (statErr && statErr.message.includes('No such file')) {
-            sftp.mkdir(currentPath, (mkdirErr?: Error | null) => {
-              if (mkdirErr) {
-                console.error(`Failed to create directory ${currentPath}: ${mkdirErr.message}`);
-                reject(mkdirErr);
-              } else {
-                console.log(`Created directory: ${currentPath}`);
-                resolve();
-              }
-            });
-          } else if (statErr) {
-            console.error(`Failed to stat directory ${currentPath}: ${statErr.message}`);
-            reject(statErr);
-          } else {
-            resolve(); // Directory already exists
-          }
-        });
-      });
-    }
-  }
-
-  // 監視を停止する関数
-  async function stopWatching() {
-    if (syncTimerId) {
-      clearInterval(syncTimerId);
-      syncTimerId = undefined;
-    }
-
-    // ファイル監視を停止
-    if (watcher) {
-      await watcher.close();
-      watcher = undefined;
-    }
-
-    // SFTPクライアントを閉じる
-    closeSftpClient();
-
-    // ステータスバーアイテムを更新して、同期を開始できることを示す
-    startStopStatusBarItem.text = 'SFTP同期開始';
-    startStopStatusBarItem.tooltip = 'SFTP同期を開始します';
-    startStopStatusBarItem.command = 'ftp-sync.startSync';
-
-    changedRelativePaths_posix.clear();
-  }
-
-  // ファイル削除を登録する関数
-  async function registerFileDeletions() {
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders) {
-      throw new Error('開いているワークスペースがありません');
-    }
-
-    const workspaceRoot = workspaceFolders[0].uri.fsPath;
-    const remotePath_posix = config.remotePath_posix;
-
-    const sftp = await safeGetSftpClient('同期の開始に失敗しました');
-    if (!sftp) {
-      return;
-    }
-
-    // リモートディレクトリが存在するか確認し、存在しない場合は作成
-    await sftpMkdirRecursive(sftp, remotePath_posix);
-
-    // リモートのファイルとディレクトリをリストアップ
-    const remoteRelativeFilePaths = await listRemoteFilesRecursiveRelative(remotePath_posix);
-
-    // ローカルのファイルとディレクトリをリストアップ
-    const localRelativeFilePaths = await listLocalFilesRecursiveRelative(workspaceRoot);
-
-    console.log('リモートファイル:', remoteRelativeFilePaths);
-    console.log('ローカルファイル:', localRelativeFilePaths);
-
-    // リモートに存在し、ローカルに存在しないファイルを削除登録
-    for (const remoteRelativeFilePath of remoteRelativeFilePaths) {
-      if (!localRelativeFilePaths.includes(remoteRelativeFilePath)) {
-        const remoteFilePath = pathUtil.posix.join(remotePath_posix, remoteRelativeFilePath);
-        try {
-          const isDirectory = await new Promise<boolean>((resolve, reject) => {
-            sftp.stat(remoteFilePath, (err: Error | undefined, stats: Stats) => {
-              if (err) {
-                if (err.message.includes('No such file')) {
-                  resolve(false); // Treat as non-existent
-                } else {
-                  reject(err);
-                }
-              } else {
-                resolve(stats.isDirectory());
-              }
-            });
-          });
-
-          const changeType = isDirectory ? 'unlinkDir' : 'unlink';
-          addChangedFile(remoteRelativeFilePath, changeType);
-          console.log(`Registered for deletion (${changeType}): ${remoteFilePath}`);
-        } catch (error) {
-          console.error(`Failed to stat remote path: ${remoteFilePath} - ${error}`);
-        }
-      }
-    }
-  }
-
-  // リモートのファイルとディレクトリを再帰的にリストアップする関数
-  async function listRemoteFilesRecursiveRelative(remotePath_posix: string): Promise<string[]> {
-    // 安全に SFTP接続を取得し、undefined なら空配列を返す
-    const sftpOptional = await safeGetSftpClient('同期処理に失敗しました');
-    if (!sftpOptional) {
-      return [];
-    }
-    const sftpClient: SFTPWrapper = sftpOptional;
-    const remotePaths_posix: string[] = [];
-
-    async function walk(path_posix: string) {
-      return new Promise<void>((resolve, reject) => {
-        sftpClient.readdir(path_posix, async (err: Error | undefined, list: FileEntryWithStats[]) => {
-          if (err) {
-            console.error(`SFTPエラー: ${err}`);
-            reject(err);
-            return;
-          }
-
-          for (const item of list) {
-            const itemPath_posix = pathUtil.posix.join(path_posix, item.filename);
-            const relativePath_posix = pathUtil.posix.relative(remotePath_posix, itemPath_posix);
-            remotePaths_posix.push(relativePath_posix);
-
-            if (item.attrs.isDirectory()) {
-              await walk(itemPath_posix);
-            }
-          }
-          resolve();
-        });
-      });
-    }
-
-    await walk(remotePath_posix);
-    return remotePaths_posix;
-  }
-
-  // ローカルのファイルとディレクトリを再帰的にリストアップする関数
-  async function listLocalFilesRecursiveRelative(workspaceRoot: string): Promise<string[]> {
-    const files: string[] = [];
-
-    async function walk(dir: string) {
-      const items = fs.readdirSync(dir);
-      for (const item of items) {
-        // 隠しファイル/ディレクトリやビルド成果物を無視
-        if (item.startsWith('.') || item === 'node_modules' || item === 'out') {
-          continue;
-        }
-        const itemPath = pathUtil.join(dir, item);
-        const relativePath = pathUtil.relative(workspaceRoot, itemPath);
-        files.push(toPosixPath(relativePath));
-        if (fs.statSync(itemPath).isDirectory()) {
-          await walk(itemPath);
-        }
-      }
-    }
-
-    await walk(workspaceRoot);
-    return files;
-  }
-
-  // 新しい関数: ファイルまたはディレクトリの削除を処理
-  async function handleDelete(sftp: SFTPWrapper, remoteFilePath: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      sftp.stat(remoteFilePath, (statErr: Error | undefined, stats: Stats) => {
-        if (statErr) {
-          if ((statErr as any).code === 'ENOENT' || statErr.message.includes('No such file')) {
-            console.log(`File or directory not found, skipping delete: ${remoteFilePath}`);
-            resolve();
-          } else {
-            console.error(`Failed to stat ${remoteFilePath}: ${statErr?.message}`);
-            reject(statErr);
-          }
-          return;
-        }
-
-        const deleteAction = stats.isDirectory() ? sftp.rmdir.bind(sftp) : sftp.unlink.bind(sftp);
-
-        deleteAction(remoteFilePath, (err?: Error | null) => {
-          if (err) {
-            console.error(`Failed to delete ${remoteFilePath}: ${err.message}`);
-            reject(err);
-          } else {
-            console.log(`Deleted: ${remoteFilePath}`);
-            resolve();
-          }
-        });
-      });
-    });
-  }
-
-  // リモートファイルを削除する関数
-  async function deleteRemoteFile(remoteFilePath: string): Promise<void> {
-    const sftp = await safeGetSftpClient('同期の開始に失敗しました');
-    if (!sftp) {
-      return;
-    }
-    await handleDelete(sftp, remoteFilePath);
-  }
-
   // 変更ファイルを記録する関数
   function addChangedFile(relativePath_posix: string, type: 'add' | 'addDir' | 'change' | 'unlink' | 'unlinkDir') {
     // 変更情報をマップに追加
@@ -577,6 +367,86 @@ export function activate(context: vscode.ExtensionContext) {
       }
     } finally {
       isSyncing = false;
+    }
+  }
+
+  // 監視を停止する関数
+  async function stopWatching() {
+    if (syncTimerId) {
+      clearInterval(syncTimerId);
+      syncTimerId = undefined;
+    }
+
+    // ファイル監視を停止
+    if (watcher) {
+      await watcher.close();
+      watcher = undefined;
+    }
+
+    // SFTPクライアントを閉じる
+    closeSftpClient();
+
+    // ステータスバーアイテムを更新して、同期を開始できることを示す
+    startStopStatusBarItem.text = 'SFTP同期開始';
+    startStopStatusBarItem.tooltip = 'SFTP同期を開始します';
+    startStopStatusBarItem.command = 'ftp-sync.startSync';
+
+    changedRelativePaths_posix.clear();
+  }
+
+  // ファイル削除を登録する関数
+  async function registerFileDeletions() {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders) {
+      throw new Error('開いているワークスペースがありません');
+    }
+
+    const workspaceRoot = workspaceFolders[0].uri.fsPath;
+    const remotePath_posix = config.remotePath_posix;
+
+    const sftp = await safeGetSftpClient('同期の開始に失敗しました');
+    if (!sftp) {
+      return;
+    }
+
+    // リモートディレクトリが存在するか確認し、存在しない場合は作成
+    await sftpMkdirRecursive(sftp, remotePath_posix);
+
+    // リモートのファイルとディレクトリをリストアップ
+    const remoteRelativeFilePaths = await listRemoteFilesRecursiveRelative(remotePath_posix);
+
+    // ローカルのファイルとディレクトリをリストアップ
+    const localRelativeFilePaths = await listLocalFilesRecursiveRelative(workspaceRoot);
+
+    console.log('リモートファイル:', remoteRelativeFilePaths);
+    console.log('ローカルファイル:', localRelativeFilePaths);
+
+    // リモートに存在し、ローカルに存在しないファイルを削除登録
+    for (const remoteRelativeFilePath of remoteRelativeFilePaths) {
+      if (!localRelativeFilePaths.includes(remoteRelativeFilePath)) {
+        const remoteFilePath = pathUtil.posix.join(remotePath_posix, remoteRelativeFilePath);
+        try {
+          const isDirectory = await new Promise<boolean>((resolve, reject) => {
+            sftp.stat(remoteFilePath, (err: Error | undefined, stats: Stats) => {
+              if (err) {
+                if (err.message.includes('No such file')) {
+                  resolve(false); // Treat as non-existent
+                } else {
+                  reject(err);
+                }
+              } else {
+                resolve(stats.isDirectory());
+              }
+            });
+          });
+
+          const changeType = isDirectory ? 'unlinkDir' : 'unlink';
+          addChangedFile(remoteRelativeFilePath, changeType);
+          console.log(`Registered for deletion (${changeType}): ${remoteFilePath}`);
+        } catch (error) {
+          console.error(`Failed to stat remote path: ${remoteFilePath} - ${error}`);
+        }
+      }
     }
   }
 
