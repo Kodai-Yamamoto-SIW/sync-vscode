@@ -5,6 +5,9 @@ import * as fs from 'fs';
 import * as pathUtil from 'path';
 import { Client } from 'ssh2';
 import * as chokidar from 'chokidar';
+import { loadConfig, saveConfig } from './config';
+import { getSftpClient, closeSftpClient, safeGetSftpClient } from './sftpClient';
+import { showSftpError, toLocalPath, toPosixPath } from './utils';
 
 // SFTP接続設定インターフェース
 interface SftpConfig {
@@ -148,7 +151,7 @@ export function activate(context: vscode.ExtensionContext) {
       updateInterval: intervalNumber
     };
 
-    saveConfig(config);
+    await saveConfig(config);
     vscode.window.showInformationMessage('SFTP設定を保存しました');
     // 以前のSFTP接続が残っている場合は切断し、再テストを強制する
     closeSftpClient();
@@ -176,65 +179,6 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   let watcher: chokidar.FSWatcher | undefined;
-
-  // 新しい関数: SFTPクライアント接続処理をまとめる（多重接続防止）
-  async function getSftpClient(): Promise<SFTPWrapper> {
-    if (activeSftp) {
-      return activeSftp; // 既存の接続を再利用
-    }
-    // 新しいClientインスタンスを作成
-    sftpClient = new Client();
-
-    return new Promise((resolve, reject) => {
-      sftpClient!.connect({
-        host: config.host,
-        port: config.port,
-        username: config.user,
-        password: config.password
-      })
-        .on('ready', () => {
-          console.log('SFTP接続に成功しました');
-          // SFTPセッションを開始
-          sftpClient!.sftp((err: Error | undefined, sftp: SFTPWrapper) => {
-            if (err) {
-              console.error(`SFTPエラー: ${err}`);
-              reject(err);
-            } else {
-              activeSftp = sftp; // 接続を保存
-              resolve(sftp);
-            }
-          });
-        })
-        .on('error', (err) => {
-          console.error(`SFTP接続エラー: ${err}`);
-          reject(err);
-        });
-    });
-  }
-
-  // SFTP接続を閉じる関数
-  function closeSftpClient() {
-    // SFTPWrapperをクリア
-    if (activeSftp) {
-      activeSftp = null;
-    }
-    // SSHクライアント接続を終了し、インスタンスを破棄
-    if (sftpClient) {
-      sftpClient.end();
-      sftpClient = null;
-      console.log('SFTP接続を閉じました');
-    }
-  }
-
-  // 新しいヘルパー: エラー表示付きで SFTP 接続を取得する
-  async function safeGetSftpClient(fallbackPrefix: string): Promise<SFTPWrapper | undefined> {
-    try {
-      return await getSftpClient();
-    } catch (error) {
-      showSftpError(error, fallbackPrefix);
-      return undefined;
-    }
-  }
 
   // ファイル監視を開始する関数
   async function startWatching() {
@@ -301,16 +245,6 @@ export function activate(context: vscode.ExtensionContext) {
       await stopWatching();
       showSftpError(error, '同期の開始に失敗しました');
     }
-  }
-
-  // パスをローカル形式に変換する関数
-  function toLocalPath(path: string): string {
-    return path.replaceAll(pathUtil.posix.sep, pathUtil.sep);
-  }
-
-  // パスをPOSIX形式に変換する関数
-  function toPosixPath(path: string): string {
-    return path.replaceAll(pathUtil.sep, pathUtil.posix.sep);
   }
 
   // 新しい関数: 再帰的にディレクトリを作成する関数
@@ -522,30 +456,6 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
     await handleDelete(sftp, remoteFilePath);
-  }
-
-  // 設定の読み込み
-  function loadConfig(): SftpConfig {
-    const config = vscode.workspace.getConfiguration('ftpSync');
-    return {
-      host: config.get('host') || '',
-      port: config.get('port') || 22,
-      user: config.get('user') || '',
-      password: config.get('password') || '',
-      remotePath_posix: config.get('remotePath') || '/',
-      updateInterval: config.get('updateInterval') || 10
-    };
-  }
-
-  // 設定の保存
-  function saveConfig(ftpConfig: SftpConfig) {
-    const config = vscode.workspace.getConfiguration('ftpSync');
-    config.update('host', ftpConfig.host, vscode.ConfigurationTarget.Global);
-    config.update('port', ftpConfig.port, vscode.ConfigurationTarget.Global);
-    config.update('user', ftpConfig.user, vscode.ConfigurationTarget.Global);
-    config.update('password', ftpConfig.password, vscode.ConfigurationTarget.Global);
-    config.update('remotePath', ftpConfig.remotePath_posix, vscode.ConfigurationTarget.Global);
-    config.update('updateInterval', ftpConfig.updateInterval, vscode.ConfigurationTarget.Global);
   }
 
   // 変更ファイルを記録する関数
