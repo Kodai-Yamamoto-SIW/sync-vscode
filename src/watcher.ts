@@ -115,7 +115,7 @@ async function syncChangedFiles() {
       }
     }
     console.log('syncChangedFiles: 処理終了');
-  } catch(error) {
+  } catch (error) {
     showSftpError(error, '同期エラー');
   } finally {
     isSyncing = false;
@@ -139,29 +139,47 @@ export async function startWatching() {
 
     console.log(`Watcher: リモート初期化 ${config.remotePath_posix}`);
     await sftpMkdirRecursive(sftp, config.remotePath_posix);
-    await listRemoteFilesRecursiveRelative(config.remotePath_posix); // 登録処理用
+    // 初期同期: リモートにのみ存在するファイル/フォルダを削除
+    const remotePaths = await listRemoteFilesRecursiveRelative(config.remotePath_posix);
+    const localPaths = await listLocalFilesRecursiveRelative(workspaceRoot);
+
+    // ローカルとリモートのパスを正規化して比較
+    const normalizedLocalPaths = new Set(localPaths.map(p => toPosixPath(p)));
+    const extraPaths = remotePaths.filter(rel => !normalizedLocalPaths.has(rel));
+
+    // 子から親の順に削除
+    extraPaths.sort((a, b) => b.length - a.length);
+    for (const rel of extraPaths) {
+      console.log(`初期同期: リモートのみ存在, 削除: ${rel}`);
+      try {
+        await handleDelete(sftp, pathUtil.posix.join(config.remotePath_posix, rel));
+        console.log(`✔ 初期同期削除成功: ${rel}`);
+      } catch (err) {
+        console.error(`✖ 初期同期削除失敗: ${rel} - ${err}`);
+      }
+    }
 
     watcher = chokidar.watch(workspaceRoot, {
-      ignored: [ /(^|[\\/])\../, '**/node_modules/**', '**/out/**' ],
+      ignored: [/(^|[\\/])\../, '**/node_modules/**', '**/out/**'],
       persistent: true
     });
     watcher.on('ready', () => console.log('Watcher is ready'));
-    const valid = new Set(['add','addDir','change','unlink','unlinkDir']);
-    watcher.on('all',(evt,path_)=>{
+    const valid = new Set(['add', 'addDir', 'change', 'unlink', 'unlinkDir']);
+    watcher.on('all', (evt, path_) => {
       console.log(`Watcher event: ${evt} ${path_}`);
       if (!valid.has(evt)) return;
       const rel = toPosixPath(pathUtil.relative(workspaceRoot, path_));
       addChangedFile(rel, evt as any);
     });
-    watcher.on('error', async err=>{
+    watcher.on('error', async err => {
       console.error(`Watcher error: ${err}`);
       await stopWatching();
     });
 
-    syncTimerId = setInterval(syncChangedFiles, config.updateInterval*1000);
+    syncTimerId = setInterval(syncChangedFiles, config.updateInterval * 1000);
     console.log('startWatching: 同期タイマー開始', config.updateInterval);
     vscode.window.showInformationMessage('SFTP同期を開始しました');
-  } catch(err) {
+  } catch (err) {
     await stopWatching();
     showSftpError(err, '同期の開始に失敗しました');
   }
@@ -184,4 +202,4 @@ export async function stopWatching() {
 // ウォッチャーが動作中かを返す
 export function isWatching(): boolean {
   return watcher !== undefined;
-} 
+}
