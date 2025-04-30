@@ -10,6 +10,7 @@ import { getSftpClient, closeSftpClient, safeGetSftpClient } from './sftpClient'
 import { showSftpError, toLocalPath, toPosixPath } from './utils';
 import { sftpMkdirRecursive, listRemoteFilesRecursiveRelative, listLocalFilesRecursiveRelative, handleDelete, deleteRemoteFile } from './sftpUtils';
 import { startWatching as watcherStart, stopWatching as watcherStop } from './watcher';
+import { StatusBarController } from './statusBarController';
 
 // SFTP接続設定インターフェース
 interface SftpConfig {
@@ -30,6 +31,10 @@ let sftpClient: Client | null = null;
 // 拡張機能のアクティベーション関数
 export function activate(context: vscode.ExtensionContext) {
   console.log('SFTP Sync拡張機能がアクティブになりました (activate)');
+
+  // ステータスバーコントローラーを初期化
+  const statusBarController = new StatusBarController();
+  context.subscriptions.push(statusBarController);
 
   // 監視中のファイル変更を保持するマップ
   let changedRelativePaths_posix = new Map<string, 'add' | 'addDir' | 'change' | 'unlink' | 'unlinkDir'>();
@@ -80,15 +85,20 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     try {
-      await watcherStart(startStopStatusBarItem);
+      await watcherStart();
+      // 同期開始後、ステータスバー更新
+      statusBarController.setState('running');
     } catch (error) {
-      await watcherStop(startStopStatusBarItem);
+      await watcherStop();
+      statusBarController.setState('idle');
       showSftpError(error, '同期の開始に失敗しました');
     }
   });
 
   let stopSyncCommand = vscode.commands.registerCommand('ftp-sync.stopSync', async () => {
-    await watcherStop(startStopStatusBarItem);
+    await watcherStop();
+    // 同期停止後、ステータスバー更新
+    statusBarController.setState('idle');
     vscode.window.showInformationMessage('SFTP同期を停止しました');
   });
 
@@ -170,9 +180,11 @@ export function activate(context: vscode.ExtensionContext) {
     // 同期中の場合は再起動
     if (syncTimerId) {
       vscode.window.showInformationMessage('SFTP設定が変更されたため、同期を再起動します');
-      await watcherStop(startStopStatusBarItem);
+      await watcherStop();
       try {
-        await watcherStart(startStopStatusBarItem);
+        await watcherStart();
+        // 設定変更後も同期中なのでステータスバー更新
+        statusBarController.setState('running');
       } catch (error) {
         showSftpError(error, '同期の再起動に失敗しました');
       }
@@ -181,22 +193,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   // ファイル監視 and 同期処理は ./watcher モジュールに委譲しました
 
-  // ステータスバーにボタンを追加
-  const configStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  configStatusBarItem.text = 'SFTP設定';
-  configStatusBarItem.command = 'ftp-sync.configureSettings';
-  configStatusBarItem.tooltip = 'SFTP設定を開きます';
-  configStatusBarItem.show();
-
-  let startStopStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
-  startStopStatusBarItem.text = syncTimerId ? 'SFTP同期停止' : 'SFTP同期開始';
-  startStopStatusBarItem.command = syncTimerId ? 'ftp-sync.stopSync' : 'ftp-sync.startSync';
-  startStopStatusBarItem.tooltip = syncTimerId ? 'SFTP同期を停止します' : 'SFTP同期を開始します';
-  startStopStatusBarItem.show();
-
-  context.subscriptions.push(startSyncCommand, stopSyncCommand, configureCommand, configStatusBarItem, startStopStatusBarItem);
+  // コマンド登録のみ行う
+  context.subscriptions.push(startSyncCommand, stopSyncCommand, configureCommand);
   // 拡張機能の非アクティブ化時にウォッチャーとSFTPをクリーンアップ
-  context.subscriptions.push({ dispose: () => { watcherStop(startStopStatusBarItem).catch((err: unknown) => console.error(`停止時のエラー: ${err}`)); } });
+  context.subscriptions.push({ dispose: () => { watcherStop().catch((err: unknown) => console.error(`停止時のエラー: ${err}`)); } });
 }
 
 // 拡張機能の非アクティブ化関数

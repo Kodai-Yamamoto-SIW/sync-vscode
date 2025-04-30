@@ -122,7 +122,7 @@ async function syncChangedFiles() {
   }
 }
 
-export async function startWatching(statusBarItem: vscode.StatusBarItem) {
+export async function startWatching() {
   console.log(`startWatching: ファイル監視開始 at ${new Date().toISOString()}`);
   if (watcher) {
     vscode.window.showInformationMessage('ファイル監視は既に開始されています');
@@ -155,23 +155,19 @@ export async function startWatching(statusBarItem: vscode.StatusBarItem) {
     });
     watcher.on('error', async err=>{
       console.error(`Watcher error: ${err}`);
-      await stopWatching(statusBarItem);
+      await stopWatching();
     });
 
     syncTimerId = setInterval(syncChangedFiles, config.updateInterval*1000);
     console.log('startWatching: 同期タイマー開始', config.updateInterval);
     vscode.window.showInformationMessage('SFTP同期を開始しました');
-    statusBarItem.text = 'SFTP同期停止';
-    statusBarItem.tooltip = 'SFTP同期を停止します';
-    statusBarItem.command = 'ftp-sync.stopSync';
-    statusBarItem.show();
   } catch(err) {
-    await stopWatching(statusBarItem);
+    await stopWatching();
     showSftpError(err, '同期の開始に失敗しました');
   }
 }
 
-export async function stopWatching(statusBarItem: vscode.StatusBarItem) {
+export async function stopWatching() {
   console.log('stopWatching: ファイル監視停止');
   if (syncTimerId) {
     clearInterval(syncTimerId);
@@ -182,8 +178,10 @@ export async function stopWatching(statusBarItem: vscode.StatusBarItem) {
     watcher = undefined;
   }
   closeSftpClient();
-  statusBarItem.text = 'SFTP同期開始';
-  statusBarItem.tooltip = 'SFTP同期を開始します';
-  statusBarItem.command = 'ftp-sync.startSync';
   changedRelativePaths.clear();
+}
+
+// ウォッチャーが動作中かを返す
+export function isWatching(): boolean {
+  return watcher !== undefined;
 } 
