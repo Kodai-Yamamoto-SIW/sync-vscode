@@ -19,12 +19,12 @@ interface SftpConfig {
 // 現在のアクティブなSFTP接続を保持する変数
 let activeSftp: SFTPWrapper | null = null;
 
+// SFTPクライアントインスタンスを保持（接続毎に再生成）
+let sftpClient: Client | null = null;
+
 // 拡張機能のアクティベーション関数
 export function activate(context: vscode.ExtensionContext) {
   console.log('SFTP Sync拡張機能がアクティブになりました (activate)');
-
-  // SFTPクライアントの初期化
-  const sftpClient = new Client();
 
   // 監視中のファイル変更を保持するマップ
   let changedRelativePaths_posix = new Map<string, 'add' | 'addDir' | 'change' | 'unlink' | 'unlinkDir'>();
@@ -37,6 +37,28 @@ export function activate(context: vscode.ExtensionContext) {
 
   // 設定の読み込み
   let config = loadConfig();
+
+  // 共通のSFTP接続エラー表示関数 (activate スコープ内)
+  function showSftpError(error: unknown, fallbackPrefix?: string) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const host = config.host;
+    const user = config.user;
+    let message: string;
+    if ((error as any).code === 'ENOTFOUND' || errMsg.includes('getaddrinfo') || errMsg.includes('ECONNREFUSED')) {
+      message = `ホスト「${host}」に接続できませんでした`;
+    } else if (
+      errMsg.includes('No such user') ||
+      errMsg.includes('All configured authentication methods failed') ||
+      errMsg.includes('Permission denied')
+    ) {
+      message = 'ユーザー名またはパスワードが正しくありません';
+    } else if (fallbackPrefix) {
+      message = `${fallbackPrefix}: ${errMsg}`;
+    } else {
+      message = errMsg;
+    }
+    vscode.window.showErrorMessage(message);
+  }
 
   // コマンドの登録
   let startSyncCommand = vscode.commands.registerCommand('ftp-sync.startSync', async () => {
@@ -56,7 +78,7 @@ export function activate(context: vscode.ExtensionContext) {
       await startWatching();
     } catch (error) {
       await stopWatching();
-      vscode.window.showErrorMessage(`同期の開始に失敗しました: ${error}`);
+      showSftpError(error, '同期の開始に失敗しました');
     }
   });
 
@@ -128,6 +150,18 @@ export function activate(context: vscode.ExtensionContext) {
 
     saveConfig(config);
     vscode.window.showInformationMessage('SFTP設定を保存しました');
+    // 以前のSFTP接続が残っている場合は切断し、再テストを強制する
+    closeSftpClient();
+
+    // 接続テスト（プログレス通知＋詳細エラー表示）
+    const testSftp = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'SFTP接続テスト中です...' },
+      () => safeGetSftpClient('接続テストに失敗しました')
+    );
+    if (testSftp) {
+      closeSftpClient();
+      vscode.window.showInformationMessage('SFTP接続テストに成功しました');
+    }
 
     // 同期中の場合は再起動
     if (syncTimerId) {
@@ -136,7 +170,7 @@ export function activate(context: vscode.ExtensionContext) {
       try {
         await startWatching();
       } catch (error) {
-        vscode.window.showErrorMessage(`同期の再起動に失敗しました: ${error}`);
+        showSftpError(error, '同期の再起動に失敗しました');
       }
     }
   });
@@ -148,9 +182,11 @@ export function activate(context: vscode.ExtensionContext) {
     if (activeSftp) {
       return activeSftp; // 既存の接続を再利用
     }
+    // 新しいClientインスタンスを作成
+    sftpClient = new Client();
 
     return new Promise((resolve, reject) => {
-      sftpClient.connect({
+      sftpClient!.connect({
         host: config.host,
         port: config.port,
         username: config.user,
@@ -158,7 +194,8 @@ export function activate(context: vscode.ExtensionContext) {
       })
         .on('ready', () => {
           console.log('SFTP接続に成功しました');
-          sftpClient.sftp((err: Error | undefined, sftp: SFTPWrapper) => {
+          // SFTPセッションを開始
+          sftpClient!.sftp((err: Error | undefined, sftp: SFTPWrapper) => {
             if (err) {
               console.error(`SFTPエラー: ${err}`);
               reject(err);
@@ -177,10 +214,25 @@ export function activate(context: vscode.ExtensionContext) {
 
   // SFTP接続を閉じる関数
   function closeSftpClient() {
+    // SFTPWrapperをクリア
     if (activeSftp) {
       activeSftp = null;
+    }
+    // SSHクライアント接続を終了し、インスタンスを破棄
+    if (sftpClient) {
       sftpClient.end();
+      sftpClient = null;
       console.log('SFTP接続を閉じました');
+    }
+  }
+
+  // 新しいヘルパー: エラー表示付きで SFTP 接続を取得する
+  async function safeGetSftpClient(fallbackPrefix: string): Promise<SFTPWrapper | undefined> {
+    try {
+      return await getSftpClient();
+    } catch (error) {
+      showSftpError(error, fallbackPrefix);
+      return undefined;
     }
   }
 
@@ -199,7 +251,10 @@ export function activate(context: vscode.ExtensionContext) {
     const workspaceRoot = workspaceFolders[0].uri.fsPath;
 
     try {
-      const sftp = await getSftpClient();
+      const sftp = await safeGetSftpClient('同期の開始に失敗しました');
+      if (!sftp) {
+        return;
+      }
 
       // リモートディレクトリの削除登録
       await registerFileDeletions();
@@ -244,7 +299,7 @@ export function activate(context: vscode.ExtensionContext) {
       startStopStatusBarItem.show();
     } catch (error) {
       await stopWatching();
-      vscode.window.showErrorMessage(`同期の開始に失敗しました: ${error}`);
+      showSftpError(error, '同期の開始に失敗しました');
     }
   }
 
@@ -323,7 +378,10 @@ export function activate(context: vscode.ExtensionContext) {
     const workspaceRoot = workspaceFolders[0].uri.fsPath;
     const remotePath_posix = config.remotePath_posix;
 
-    const sftp = await getSftpClient();
+    const sftp = await safeGetSftpClient('同期の開始に失敗しました');
+    if (!sftp) {
+      return;
+    }
 
     // リモートディレクトリが存在するか確認し、存在しない場合は作成
     await sftpMkdirRecursive(sftp, remotePath_posix);
@@ -368,12 +426,17 @@ export function activate(context: vscode.ExtensionContext) {
 
   // リモートのファイルとディレクトリを再帰的にリストアップする関数
   async function listRemoteFilesRecursiveRelative(remotePath_posix: string): Promise<string[]> {
-    const sftp = await getSftpClient();
+    // 安全に SFTP接続を取得し、undefined なら空配列を返す
+    const sftpOptional = await safeGetSftpClient('同期処理に失敗しました');
+    if (!sftpOptional) {
+      return [];
+    }
+    const sftpClient: SFTPWrapper = sftpOptional;
     const remotePaths_posix: string[] = [];
 
     async function walk(path_posix: string) {
       return new Promise<void>((resolve, reject) => {
-        sftp.readdir(path_posix, async (err: Error | undefined, list: FileEntryWithStats[]) => {
+        sftpClient.readdir(path_posix, async (err: Error | undefined, list: FileEntryWithStats[]) => {
           if (err) {
             console.error(`SFTPエラー: ${err}`);
             reject(err);
@@ -454,7 +517,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   // リモートファイルを削除する関数
   async function deleteRemoteFile(remoteFilePath: string): Promise<void> {
-    const sftp = await getSftpClient();
+    const sftp = await safeGetSftpClient('同期の開始に失敗しました');
+    if (!sftp) {
+      return;
+    }
     await handleDelete(sftp, remoteFilePath);
   }
 
@@ -505,7 +571,11 @@ export function activate(context: vscode.ExtensionContext) {
 
       const workspaceRoot = workspaceFolders[0].uri.fsPath;
 
-      const sftp = await getSftpClient();
+      // SFTP接続を取得（失敗時は処理中止）
+      const sftp = await safeGetSftpClient('同期処理に失敗しました');
+      if (!sftp) {
+        return;
+      }
 
       // 変更を種類ごとに分類
       const addDirPaths_posix: string[] = [];
@@ -593,7 +663,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
       } catch (error) {
         console.error(`Sync error: ${error}`);
-        vscode.window.showErrorMessage(`同期エラー: ${error}`);
+        showSftpError(error, '同期エラー');
       }
     } finally {
       isSyncing = false;
