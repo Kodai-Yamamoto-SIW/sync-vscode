@@ -23,10 +23,11 @@ export function loadConfig(): SftpConfig {
 
 export async function saveConfig(cfg: SftpConfig): Promise<void> {
   const config = vscode.workspace.getConfiguration('ftpSync');
-  await config.update('host', cfg.host, vscode.ConfigurationTarget.Global);
-  await config.update('port', cfg.port, vscode.ConfigurationTarget.Global);
-  await config.update('user', cfg.user, vscode.ConfigurationTarget.Global);
-  await config.update('password', cfg.password, vscode.ConfigurationTarget.Global);
-  await config.update('remotePath', cfg.remotePath_posix, vscode.ConfigurationTarget.Global);
-  await config.update('updateInterval', cfg.updateInterval, vscode.ConfigurationTarget.Global);
+  const TARGET = vscode.ConfigurationTarget.Global;
+  await config.update('host', cfg.host, TARGET);
+  await config.update('port', cfg.port, TARGET);
+  await config.update('user', cfg.user, TARGET);
+  await config.update('password', cfg.password, TARGET);
+  await config.update('remotePath', cfg.remotePath_posix, TARGET);
+  await config.update('updateInterval', cfg.updateInterval, TARGET);
 } 
