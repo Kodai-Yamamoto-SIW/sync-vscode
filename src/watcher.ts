@@ -154,14 +154,7 @@ export async function startWatching() {
     await sftpMkdirRecursive(sftp, config.remotePath_posix);
 
     // 初期同期: リモートにのみ存在するファイル/フォルダを削除
-    let remotePaths: string[];
-    try {
-      remotePaths = await listRemoteFilesRecursiveRelative(config.remotePath_posix);
-    } catch (err) {
-      showError(ErrorCode.PermissionDenied, `リモートの基準パス「${config.remotePath_posix}」にアクセスできませんでした`);
-      await stopWatching();
-      return;
-    }
+    const remotePaths = await listRemoteFilesRecursiveRelative(config.remotePath_posix);
     const localPaths = await listLocalFilesRecursiveRelative(workspaceRoot);
 
     // ローカルとリモートのパスを正規化して比較
@@ -271,11 +264,7 @@ export async function startWatching() {
   } catch (error) {
     await stopWatching();
     const errMsg = error instanceof Error ? error.message : String(error);
-    if (errMsg.includes('Permission denied') || (error as any).code === 'EACCES') {
-      showError(ErrorCode.PermissionDenied, `リモートの基準パス「${config.remotePath_posix}」にアクセスできませんでした`);
-    } else {
-      showError(ErrorCode.SyncStartFailed, errMsg);
-    }
+    showError(ErrorCode.SyncStartFailed, errMsg);
     return;
   }
 }
