@@ -3,12 +3,11 @@ import * as chokidar from 'chokidar';
 import * as pathUtil from 'path';
 import * as fs from 'fs';
 import { safeGetSftpClient, closeSftpClient } from './sftpClient';
-import { sftpMkdirRecursive, listRemoteFilesRecursiveRelative, listLocalFilesRecursiveRelative, handleDelete } from './sftpUtils';
+import { sftpMkdirRecursive, listRemoteFilesRecursiveRelative, listLocalFilesRecursiveRelative, handleDelete, sftpRmdirRecursive } from './sftpUtils';
 import { showSftpError, toPosixPath } from './utils';
 import { loadConfig } from './config';
 
-let watcher: chokidar.FSWatcher | undefined;
-let syncTimerId: NodeJS.Timeout | undefined;
+let watcher: vscode.FileSystemWatcher | undefined;
 let isSyncing = false;
 const changedRelativePaths = new Map<string, 'add' | 'addDir' | 'change' | 'unlink' | 'unlinkDir'>();
 
@@ -49,13 +48,15 @@ async function syncChangedFiles() {
     console.log(`リモートルートパス: ${config.remotePath_posix}`);
     console.log('同期対象一覧:', { deleteFiles, deleteDirs, addDirs, upsertFiles });
 
-    // 1. ファイル削除
-    if (deleteFiles.length > 0) {
-      console.log('ファイル削除処理開始');
-      for (const rel of deleteFiles) {
+    // 1. ファイル/ディレクトリを再帰的に削除
+    const deletePaths = [...deleteDirs, ...deleteFiles];
+    if (deletePaths.length > 0) {
+      console.log('削除処理開始');
+      deletePaths.sort((a, b) => b.length - a.length);
+      for (const rel of deletePaths) {
         console.log(`→ 削除: ${rel}`);
         try {
-          await handleDelete(sftp, pathUtil.posix.join(config.remotePath_posix, rel));
+          await sftpRmdirRecursive(sftp, pathUtil.posix.join(config.remotePath_posix, rel));
           console.log(`✔ 削除完了: ${rel}`);
           changedRelativePaths.delete(rel);
         } catch (err) {
@@ -64,23 +65,7 @@ async function syncChangedFiles() {
       }
     }
 
-    // 2. ディレクトリ削除
-    if (deleteDirs.length > 0) {
-      console.log('ディレクトリ削除処理開始');
-      deleteDirs.sort((a, b) => b.length - a.length);
-      for (const rel of deleteDirs) {
-        console.log(`→ 削除ディレクトリ: ${rel}`);
-        try {
-          await handleDelete(sftp, pathUtil.posix.join(config.remotePath_posix, rel));
-          console.log(`✔ ディレクトリ削除完了: ${rel}`);
-          changedRelativePaths.delete(rel);
-        } catch (err) {
-          console.error(`✖ ディレクトリ削除失敗: ${rel} - ${err}`);
-        }
-      }
-    }
-
-    // 3. ディレクトリ作成
+    // 2. ディレクトリ作成
     if (addDirs.length > 0) {
       console.log('ディレクトリ作成処理開始');
       addDirs.sort((a, b) => a.length - b.length);
@@ -96,7 +81,7 @@ async function syncChangedFiles() {
       }
     }
 
-    // 4. ファイルアップロード
+    // 3. ファイルアップロード
     if (upsertFiles.length > 0) {
       console.log('ファイルアップロード処理開始');
       for (const rel of upsertFiles) {
@@ -131,6 +116,11 @@ async function syncChangedFiles() {
     showSftpError(error, '同期エラー');
   } finally {
     isSyncing = false;
+    // pending changes exist? resync immediately
+    if (changedRelativePaths.size > 0) {
+      console.log('syncChangedFiles: 保留中の変更があるため再同期');
+      syncChangedFiles();
+    }
   }
 }
 
@@ -171,26 +161,40 @@ export async function startWatching() {
       }
     }
 
-    watcher = chokidar.watch(workspaceRoot, {
-      ignored: [/(^|[\\/])\../, '**/node_modules/**', '**/out/**'],
-      persistent: true,
-      ignorePermissionErrors: true // ← 追加
+    // VS Code FileSystemWatcher で監視（Windowsのファイルロックを回避）
+    watcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(workspaceFolders[0], '**/*'),
+      false, false, false
+    );
+    const ignoreRe = /(^|[\\/])\.|[\\/]node_modules[\\/]|[\\/]out[\\/]/;
+    watcher.onDidCreate(uri => {
+      const fsPath = uri.fsPath;
+      if (ignoreRe.test(fsPath)) return;
+      const rel = toPosixPath(pathUtil.relative(workspaceRoot, fsPath));
+      try {
+        const stat = fs.statSync(fsPath);
+        addChangedFile(rel, stat.isDirectory() ? 'addDir' : 'add');
+      } catch {
+        return;
+      }
+      syncChangedFiles();
     });
-    watcher.on('ready', () => console.log('Watcher is ready'));
-    const valid = new Set(['add', 'addDir', 'change', 'unlink', 'unlinkDir']);
-    watcher.on('all', (evt, path_) => {
-      console.log(`Watcher event: ${evt} ${path_}`);
-      if (!valid.has(evt)) return;
-      const rel = toPosixPath(pathUtil.relative(workspaceRoot, path_));
-      addChangedFile(rel, evt as any);
+    watcher.onDidChange(uri => {
+      const fsPath = uri.fsPath;
+      if (ignoreRe.test(fsPath)) return;
+      const rel = toPosixPath(pathUtil.relative(workspaceRoot, fsPath));
+      addChangedFile(rel, 'change');
+      syncChangedFiles();
     });
-    watcher.on('error', async err => {
-      console.error(`Watcher error: ${err}`);
-      await stopWatching();
+    watcher.onDidDelete(uri => {
+      const fsPath = uri.fsPath;
+      if (ignoreRe.test(fsPath)) return;
+      const rel = toPosixPath(pathUtil.relative(workspaceRoot, fsPath));
+      addChangedFile(rel, 'unlink');
+      syncChangedFiles();
     });
 
-    syncTimerId = setInterval(syncChangedFiles, config.updateInterval * 1000);
-    console.log('startWatching: 同期タイマー開始', config.updateInterval);
+    console.log('startWatching: ファイル変更時に即時同期モード');
     vscode.window.showInformationMessage('SFTP同期を開始しました');
   } catch (err) {
     await stopWatching();
@@ -200,12 +204,8 @@ export async function startWatching() {
 
 export async function stopWatching() {
   console.log('stopWatching: ファイル監視停止');
-  if (syncTimerId) {
-    clearInterval(syncTimerId);
-    syncTimerId = undefined;
-  }
   if (watcher) {
-    await watcher.close();
+    watcher.dispose();
     watcher = undefined;
   }
   closeSftpClient();
