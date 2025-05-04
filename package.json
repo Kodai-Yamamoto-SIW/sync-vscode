@@ -60,6 +60,11 @@
           "type": "number",
           "default": 10,
           "description": "同期の間隔（秒）"
+        },
+        "ftpSync.maxUploadSize": {
+          "type": "number",
+          "default": 20971520,
+          "description": "SFTPで送信できるファイルサイズの上限（バイト）。デフォルトは20MB。"
         }
       }
     }

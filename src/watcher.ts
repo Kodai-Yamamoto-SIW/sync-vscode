@@ -102,6 +102,18 @@ async function syncChangedFiles() {
       for (const rel of upsertFiles) {
         const localPath = pathUtil.join(workspaceRoot, rel);
         const remotePath = pathUtil.posix.join(config.remotePath_posix, rel);
+        try {
+          const stat = fs.statSync(localPath);
+          if (stat.size > config.maxUploadSize) {
+            vscode.window.showWarningMessage(`「${rel}」はファイルサイズが上限(${(config.maxUploadSize / 1024 / 1024).toFixed(1)}MB)を超えているため送信しません。`);
+            console.warn(`スキップ: ${rel} サイズ: ${stat.size} > ${config.maxUploadSize}`);
+            changedRelativePaths.delete(rel);
+            continue;
+          }
+        } catch (err) {
+          console.error(`ファイルサイズ取得失敗: ${rel} - ${err}`);
+          continue;
+        }
         console.log(`→ アップロード: ${rel}`);
         try {
           await new Promise<void>((resolve, reject) => {

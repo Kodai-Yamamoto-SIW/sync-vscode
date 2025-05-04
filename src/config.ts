@@ -5,6 +5,7 @@ export interface SftpConfig {
   password: string;
   remotePath_posix: string;
   updateInterval: number;
+  maxUploadSize: number; // 追加: ファイルサイズ上限（バイト）
 }
 
 import * as vscode from 'vscode';
@@ -17,7 +18,8 @@ export function loadConfig(): SftpConfig {
     user: config.get('user') || '',
     password: config.get('password') || '',
     remotePath_posix: config.get('remotePath') || '/',
-    updateInterval: config.get('updateInterval') || 10
+    updateInterval: config.get('updateInterval') || 10,
+    maxUploadSize: config.get('maxUploadSize') || 20971520 // 20MB
   };
 }
 
@@ -30,4 +32,5 @@ export async function saveConfig(cfg: SftpConfig): Promise<void> {
   await config.update('password', cfg.password, TARGET);
   await config.update('remotePath', cfg.remotePath_posix, TARGET);
   await config.update('updateInterval', cfg.updateInterval, TARGET);
-} 
+  await config.update('maxUploadSize', cfg.maxUploadSize, TARGET);
+}

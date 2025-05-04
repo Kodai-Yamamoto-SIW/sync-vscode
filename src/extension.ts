@@ -164,7 +164,8 @@ export function activate(context: vscode.ExtensionContext) {
       user,
       password,
       remotePath_posix: toPosixPath(pathUtil.posix.normalize(remotePath)),
-      updateInterval: intervalNumber
+      updateInterval: intervalNumber,
+      maxUploadSize: config.maxUploadSize // 既存の設定を保持
     };
 
     await saveConfig(config);
