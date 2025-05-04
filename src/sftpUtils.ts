@@ -4,6 +4,7 @@ import * as pathUtil from 'path';
 import { safeGetSftpClient } from './sftpClient';
 import * as vscode from 'vscode';
 import { showSftpError } from './utils';
+import { ErrorCode, showError } from './errors';
 
 // 再帰的にディレクトリを作成
 export async function sftpMkdirRecursive(sftp: SFTPWrapper, dirPath_posix: string): Promise<void> {
@@ -46,7 +47,7 @@ export async function listRemoteFilesRecursiveRelative(remotePath_posix: string)
           console.error(`SFTPエラー: ${err}`);
           const errMsg = err instanceof Error ? err.message : String(err);
           if (errMsg.includes('Permission denied')) {
-            vscode.window.showErrorMessage(`リモートのパス「${remotePath_posix}」内の「${p}」にアクセスする権限がありません`);
+            showError(ErrorCode.PermissionDenied, `リモートのパス「${remotePath_posix}」内の「${p}」にアクセスできませんでした`);
           } else {
             showSftpError(err, 'リモートファイルリスト取得に失敗しました');
           }

@@ -3,8 +3,10 @@ import * as pathUtil from 'path';
 import * as fs from 'fs';
 import { safeGetSftpClient, closeSftpClient } from './sftpClient';
 import { sftpMkdirRecursive, listRemoteFilesRecursiveRelative, listLocalFilesRecursiveRelative, handleDelete, sftpRmdirRecursive } from './sftpUtils';
-import { showSftpError, toPosixPath } from './utils';
+import { toPosixPath } from './utils';
 import { loadConfig } from './config';
+import { ErrorCode, showError } from './errors';
+import { statusBarControllerInstance } from './extension';
 
 let watcher: vscode.FileSystemWatcher | undefined;
 let isSyncing = false;
@@ -27,7 +29,10 @@ async function syncChangedFiles() {
     if (!workspaceFolders) return;
     const workspaceRoot = workspaceFolders[0].uri.fsPath;
     const sftp = await safeGetSftpClient('同期処理に失敗しました');
-    if (!sftp) return;
+    if (!sftp) {
+      await stopWatching();
+      return;
+    }
 
     // 変更を種類ごとに分類
     const deleteFiles: string[] = [];
@@ -112,7 +117,8 @@ async function syncChangedFiles() {
     }
     console.log('syncChangedFiles: 処理終了');
   } catch (error) {
-    showSftpError(error, '同期エラー');
+    showError(ErrorCode.SyncError, error instanceof Error ? error.message : String(error));
+    await stopWatching();
   } finally {
     isSyncing = false;
     // pending changes exist? resync immediately
@@ -127,7 +133,7 @@ export async function startWatching() {
   const config = loadConfig();
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (!workspaceFolders) {
-    vscode.window.showErrorMessage('ワークスペースがありません');
+    showError(ErrorCode.WorkspaceMissing);
     return;
   }
   const workspaceRoot = workspaceFolders[0].uri.fsPath;
@@ -152,7 +158,7 @@ export async function startWatching() {
     try {
       remotePaths = await listRemoteFilesRecursiveRelative(config.remotePath_posix);
     } catch (err) {
-      vscode.window.showErrorMessage(`リモートの基準パス「${config.remotePath_posix}」にアクセスする権限がありません`);
+      showError(ErrorCode.PermissionDenied, `リモートの基準パス「${config.remotePath_posix}」にアクセスできませんでした`);
       await stopWatching();
       return;
     }
@@ -266,9 +272,9 @@ export async function startWatching() {
     await stopWatching();
     const errMsg = error instanceof Error ? error.message : String(error);
     if (errMsg.includes('Permission denied') || (error as any).code === 'EACCES') {
-      vscode.window.showErrorMessage(`リモートの基準パス「${config.remotePath_posix}」にアクセスする権限がありません`);
+      showError(ErrorCode.PermissionDenied, `リモートの基準パス「${config.remotePath_posix}」にアクセスできませんでした`);
     } else {
-      showSftpError(error, '同期の開始に失敗しました');
+      showError(ErrorCode.SyncStartFailed, errMsg);
     }
     return;
   }
@@ -276,6 +282,8 @@ export async function startWatching() {
 
 export async function stopWatching() {
   console.log('stopWatching: ファイル監視停止');
+  // エラー時や停止時にステータスバーを元に戻す
+  statusBarControllerInstance?.setState('idle');
   if (watcher) {
     watcher.dispose();
     watcher = undefined;

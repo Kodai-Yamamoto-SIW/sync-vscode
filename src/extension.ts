@@ -2,9 +2,12 @@
 import * as vscode from 'vscode';
 import { loadConfig, saveConfig } from './config';
 import { safeGetSftpClient, closeSftpClient } from './sftpClient';
-import { toPosixPath, showSftpError } from './utils';
+import { toPosixPath } from './utils';
 import { startWatching as watcherStart, stopWatching as watcherStop, isWatching } from './watcher';
 import { StatusBarController } from './statusBarController';
+import { ErrorCode, showError } from './errors';
+
+export let statusBarControllerInstance: StatusBarController;
 
 // 拡張機能のアクティベーション関数
 export function activate(context: vscode.ExtensionContext) {
@@ -12,6 +15,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // ステータスバーコントローラーを初期化
   const statusBarController = new StatusBarController();
+  statusBarControllerInstance = statusBarController;
   context.subscriptions.push(statusBarController);
 
   // 設定の読み込み
@@ -23,7 +27,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // 設定が完了しているか確認
     if (!config.host || !config.user) {
-      vscode.window.showErrorMessage('SFTP設定が不完全です。設定を確認してください');
+      showError(ErrorCode.IncompleteSettings);
       await vscode.commands.executeCommand('ftp-sync.configureSettings');
       config = loadConfig();
       if (!config.host || !config.user) {
@@ -33,11 +37,13 @@ export function activate(context: vscode.ExtensionContext) {
 
     try {
       await watcherStart();
-      statusBarController.setState('running');
+      if (isWatching()) {
+        statusBarController.setState('running');
+      }
     } catch (error) {
       await watcherStop();
       statusBarController.setState('idle');
-      showSftpError(error, '同期の開始に失敗しました');
+      showError(ErrorCode.SyncStartFailed, error instanceof Error ? error.message : String(error));
     }
   });
 
@@ -63,7 +69,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     const portNumber = parseInt(port, 10);
     if (isNaN(portNumber) || portNumber <= 0) {
-      vscode.window.showErrorMessage('無効なポート番号です');
+      showError(ErrorCode.InvalidPort);
       return;
     }
 
@@ -115,9 +121,11 @@ export function activate(context: vscode.ExtensionContext) {
       await watcherStop();
       try {
         await watcherStart();
-        statusBarController.setState('running');
+        if (isWatching()) {
+          statusBarController.setState('running');
+        }
       } catch (error) {
-        showSftpError(error, '同期の再起動に失敗しました');
+        showError(ErrorCode.SyncRestartFailed, error instanceof Error ? error.message : String(error));
       }
     }
   });
