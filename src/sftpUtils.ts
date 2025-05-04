@@ -2,6 +2,8 @@ import { SFTPWrapper, FileEntryWithStats, Stats } from 'ssh2';
 import * as fs from 'fs';
 import * as pathUtil from 'path';
 import { safeGetSftpClient } from './sftpClient';
+import * as vscode from 'vscode';
+import { showSftpError } from './utils';
 
 // 再帰的にディレクトリを作成
 export async function sftpMkdirRecursive(sftp: SFTPWrapper, dirPath_posix: string): Promise<void> {
@@ -36,26 +38,36 @@ export async function listRemoteFilesRecursiveRelative(remotePath_posix: string)
   const sftpClient: SFTPWrapper = sftpOptional;
   const remotePaths: string[] = [];
 
-  async function walk(p: string) {
-    return new Promise<void>((resolve, reject) => {
-      sftpClient.readdir(p, async (err: Error | undefined, list: FileEntryWithStats[]) => {
+  async function walk(p: string): Promise<void> {
+    // readdir を await で扱う
+    const list = await new Promise<FileEntryWithStats[]>((resolve, reject) => {
+      sftpClient.readdir(p, (err, list) => {
         if (err) {
           console.error(`SFTPエラー: ${err}`);
-          reject(err);
-        } else {
-          for (const item of list) {
-            const itemPath = pathUtil.posix.join(p, item.filename);
-            const rel = pathUtil.posix.relative(remotePath_posix, itemPath);
-            remotePaths.push(rel);
-            if (item.attrs.isDirectory()) {
-              await walk(itemPath);
-            }
+          const errMsg = err instanceof Error ? err.message : String(err);
+          if (errMsg.includes('Permission denied')) {
+            vscode.window.showErrorMessage(`リモートのパス「${remotePath_posix}」内の「${p}」にアクセスする権限がありません`);
+          } else {
+            showSftpError(err, 'リモートファイルリスト取得に失敗しました');
           }
-          resolve();
+          return reject(err);
         }
+        resolve(list);
       });
     });
+
+    for (const item of list) {
+      const itemPath = pathUtil.posix.join(p, item.filename);
+      const rel = pathUtil.posix.relative(remotePath_posix, itemPath);
+      remotePaths.push(rel);
+      if (item.attrs.isDirectory()) {
+        // ここで例外発生時は walk の戻り値の Promise が reject され、
+        // 呼び出し元の try/catch で適切に捕まえられます
+        await walk(itemPath);
+      }
+    }
   }
+
   await walk(remotePath_posix);
   return remotePaths;
 }

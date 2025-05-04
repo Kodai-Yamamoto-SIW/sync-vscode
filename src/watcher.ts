@@ -124,28 +124,38 @@ async function syncChangedFiles() {
 }
 
 export async function startWatching() {
+  const config = loadConfig();
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (!workspaceFolders) {
+    vscode.window.showErrorMessage('ワークスペースがありません');
+    return;
+  }
+  const workspaceRoot = workspaceFolders[0].uri.fsPath;
+
   console.log(`startWatching: ファイル監視開始 at ${new Date().toISOString()}`);
   if (watcher) {
     vscode.window.showInformationMessage('ファイル監視は既に開始されています');
     return;
   }
-  const config = loadConfig();
-  const workspaceFolders = vscode.workspace.workspaceFolders;
-  if (!workspaceFolders) throw new Error('ワークスペースがありません');
-  const workspaceRoot = workspaceFolders[0].uri.fsPath;
 
   try {
-    // SFTPクライアントを取得し、失敗時はエラーを投げる
     const sftp = await safeGetSftpClient('同期の開始に失敗しました');
     if (!sftp) {
-      await stopWatching();
       throw new Error('同期を開始できませんでした');
     }
 
-    console.log(`Watcher: リモート初期化 ${config.remotePath_posix}`);
+    // リモートパス初期化と権限チェック
     await sftpMkdirRecursive(sftp, config.remotePath_posix);
+
     // 初期同期: リモートにのみ存在するファイル/フォルダを削除
-    const remotePaths = await listRemoteFilesRecursiveRelative(config.remotePath_posix);
+    let remotePaths: string[];
+    try {
+      remotePaths = await listRemoteFilesRecursiveRelative(config.remotePath_posix);
+    } catch (err) {
+      vscode.window.showErrorMessage(`リモートの基準パス「${config.remotePath_posix}」にアクセスする権限がありません`);
+      await stopWatching();
+      return;
+    }
     const localPaths = await listLocalFilesRecursiveRelative(workspaceRoot);
 
     // ローカルとリモートのパスを正規化して比較
@@ -252,10 +262,15 @@ export async function startWatching() {
 
     console.log('startWatching: ファイル変更時に即時同期モード');
     vscode.window.showInformationMessage('SFTP同期を開始しました');
-  } catch (err) {
+  } catch (error) {
     await stopWatching();
-    showSftpError(err, '同期の開始に失敗しました');
-    throw err;
+    const errMsg = error instanceof Error ? error.message : String(error);
+    if (errMsg.includes('Permission denied') || (error as any).code === 'EACCES') {
+      vscode.window.showErrorMessage(`リモートの基準パス「${config.remotePath_posix}」にアクセスする権限がありません`);
+    } else {
+      showSftpError(error, '同期の開始に失敗しました');
+    }
+    return;
   }
 }
 

@@ -13,8 +13,7 @@ export function showSftpError(error: unknown, fallbackPrefix?: string) {
     message = `ホスト「${host}」に接続できませんでした`;
   } else if (
     errMsg.includes('No such user') ||
-    errMsg.includes('All configured authentication methods failed') ||
-    errMsg.includes('Permission denied')
+    errMsg.includes('All configured authentication methods failed')
   ) {
     message = 'ユーザー名またはパスワードが正しくありません';
   } else if (fallbackPrefix) {
