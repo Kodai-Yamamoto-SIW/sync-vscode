@@ -135,8 +135,12 @@ export async function startWatching() {
   const workspaceRoot = workspaceFolders[0].uri.fsPath;
 
   try {
+    // SFTPクライアントを取得し、失敗時はエラーを投げる
     const sftp = await safeGetSftpClient('同期の開始に失敗しました');
-    if (!sftp) return;
+    if (!sftp) {
+      await stopWatching();
+      throw new Error('同期を開始できませんでした');
+    }
 
     console.log(`Watcher: リモート初期化 ${config.remotePath_posix}`);
     await sftpMkdirRecursive(sftp, config.remotePath_posix);
@@ -251,6 +255,7 @@ export async function startWatching() {
   } catch (err) {
     await stopWatching();
     showSftpError(err, '同期の開始に失敗しました');
+    throw err;
   }
 }
 
