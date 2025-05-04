@@ -161,6 +161,59 @@ export async function startWatching() {
       }
     }
 
+    // 初期同期: ローカルにのみ存在するファイル/フォルダをアップロード
+    const normalizedRemote = new Set(remotePaths);
+    const localOnly = localPaths.map(p => toPosixPath(p)).filter(rel => !normalizedRemote.has(rel));
+    localOnly.sort((a, b) => a.length - b.length);
+    for (const rel of localOnly) {
+      const localFull = pathUtil.join(workspaceRoot, rel);
+      const remoteFull = pathUtil.posix.join(config.remotePath_posix, rel);
+      try {
+        const stat = fs.statSync(localFull);
+        if (stat.isDirectory()) {
+          console.log(`初期同期: 作成ディレクトリ: ${rel}`);
+          await sftpMkdirRecursive(sftp, remoteFull);
+          console.log(`✔ 初期同期ディレクトリ作成: ${rel}`);
+        } else {
+          console.log(`初期同期: アップロードファイル: ${rel}`);
+          await new Promise<void>((resolve, reject) => {
+            sftp.fastPut(localFull, remoteFull, err => err ? reject(err) : resolve());
+          });
+          console.log(`✔ 初期同期アップロード完了: ${rel}`);
+        }
+      } catch (err) {
+        console.error(`✖ 初期同期アップロード失敗: ${rel} - ${err}`);
+      }
+    }
+
+    // 初期同期: ローカルとリモート両方に存在するファイルで、ローカルが新しければアップロード
+    const both = localPaths.map(p => toPosixPath(p)).filter(rel => normalizedRemote.has(rel));
+    both.sort((a, b) => a.length - b.length);
+    for (const rel of both) {
+      const localFull = pathUtil.join(workspaceRoot, rel);
+      let statLocal: fs.Stats;
+      try { statLocal = fs.statSync(localFull); } catch { continue; }
+      if (!statLocal.isFile()) continue;
+      const remoteFull = pathUtil.posix.join(config.remotePath_posix, rel);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          sftp.stat(remoteFull, (err, stats) => {
+            if (err) return resolve();
+            const remoteMtimeMs = (stats as any).mtime * 1000;
+            if (statLocal.mtimeMs > remoteMtimeMs) {
+              console.log(`初期同期: 更新ファイルアップロード: ${rel}`);
+              sftp.fastPut(localFull, remoteFull, err2 => err2 ? reject(err2) : resolve());
+            } else {
+              resolve();
+            }
+          });
+        });
+        console.log(`✔ 初期同期更新完了: ${rel}`);
+      } catch (err) {
+        console.error(`✖ 初期同期更新失敗: ${rel} - ${err}`);
+      }
+    }
+
     // VS Code FileSystemWatcher で監視（Windowsのファイルロックを回避）
     watcher = vscode.workspace.createFileSystemWatcher(
       new vscode.RelativePattern(workspaceFolders[0], '**/*'),
