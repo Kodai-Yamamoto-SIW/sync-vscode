@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import * as chokidar from 'chokidar';
 import * as pathUtil from 'path';
 import * as fs from 'fs';
 import { safeGetSftpClient, closeSftpClient } from './sftpClient';
@@ -199,7 +198,7 @@ export async function startWatching() {
         await new Promise<void>((resolve, reject) => {
           sftp.stat(remoteFull, (err, stats) => {
             if (err) return resolve();
-            const remoteMtimeMs = (stats as any).mtime * 1000;
+            const remoteMtimeMs = stats.mtime * 1000;
             if (statLocal.mtimeMs > remoteMtimeMs) {
               console.log(`初期同期: 更新ファイルアップロード: ${rel}`);
               sftp.fastPut(localFull, remoteFull, err2 => err2 ? reject(err2) : resolve());
