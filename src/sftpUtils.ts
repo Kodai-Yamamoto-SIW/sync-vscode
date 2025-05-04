@@ -93,13 +93,6 @@ export async function handleDelete(sftp: SFTPWrapper, remoteFilePath: string): P
   });
 }
 
-// リモートファイル削除
-export async function deleteRemoteFile(remoteFilePath: string): Promise<void> {
-  const sftp = await safeGetSftpClient('リモートファイル削除に失敗しました');
-  if (!sftp) return;
-  await handleDelete(sftp, remoteFilePath);
-}
-
 // リモートのファイル/ディレクトリを再帰的に削除
 export async function sftpRmdirRecursive(sftp: SFTPWrapper, remotePath: string): Promise<void> {
   return new Promise((resolve, reject) => {

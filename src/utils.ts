@@ -25,12 +25,7 @@ export function showSftpError(error: unknown, fallbackPrefix?: string) {
   vscode.window.showErrorMessage(message);
 }
 
-// パスをローカル形式に変換する
-export function toLocalPath(p: string): string {
-  return p.replaceAll(path.posix.sep, path.sep);
-}
-
 // パスを POSIX 形式に変換する
 export function toPosixPath(p: string): string {
   return p.replaceAll(path.sep, path.posix.sep);
-} 
+}

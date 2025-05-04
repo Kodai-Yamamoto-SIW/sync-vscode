@@ -56,11 +56,6 @@
           "default": "/",
           "description": "リモートの基準パス"
         },
-        "ftpSync.updateInterval": {
-          "type": "number",
-          "default": 10,
-          "description": "同期の間隔（秒）"
-        },
         "ftpSync.maxUploadSize": {
           "type": "number",
           "default": 20971520,

@@ -86,18 +86,6 @@ export function activate(context: vscode.ExtensionContext) {
     });
     if (!remotePath) return;
 
-    const updateInterval = await vscode.window.showInputBox({
-      prompt: '更新間隔（秒）を入力してください',
-      value: config.updateInterval?.toString() || '10'
-    });
-    if (!updateInterval) return;
-
-    const intervalNumber = parseInt(updateInterval, 10);
-    if (isNaN(intervalNumber) || intervalNumber <= 0) {
-      vscode.window.showErrorMessage('無効な同期間隔です');
-      return;
-    }
-
     // 設定の保存
     config = {
       host,
@@ -105,8 +93,7 @@ export function activate(context: vscode.ExtensionContext) {
       user,
       password,
       remotePath_posix: toPosixPath(remotePath),
-      updateInterval: intervalNumber,
-      maxUploadSize: config.maxUploadSize // 既存の設定を保持
+      maxUploadSize: config.maxUploadSize
     };
 
     await saveConfig(config);
