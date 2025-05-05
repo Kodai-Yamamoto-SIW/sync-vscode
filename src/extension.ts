@@ -9,6 +9,66 @@ import { ErrorCode, showError } from './errors';
 
 export let statusBarControllerInstance: StatusBarController;
 
+/**
+ * SFTP接続テストを実行する
+ * @returns テスト成功したかどうか
+ */
+async function testSftpConnection(): Promise<boolean> {
+  // プログレス通知を表示せずに直接接続テスト
+  try {
+    const client = await safeGetSftpClient('接続テストに失敗しました');
+    if (client) {
+      closeSftpClient();
+      vscode.window.showInformationMessage('SFTP接続テストに成功しました');
+      return true;
+    }
+  } catch (error) {
+    console.error('SFTP接続テストエラー:', error);
+  }
+  
+  return false;
+}
+
+/**
+ * 設定変更後の同期状態を管理する関数
+ * 同期中だった場合は再開し、そうでなければ接続テストのみ実行
+ */
+async function handleConfigChange(statusBarController: StatusBarController): Promise<void> {
+  // SFTP接続をリセット
+  closeSftpClient();
+  
+  // 監視中だった場合は再起動
+  if (isWatching()) {
+    try {
+      await watcherStop();
+      await watcherStart();
+      if (isWatching()) {
+        statusBarController.setState('running');
+      }
+    } catch (error) {
+      statusBarController.setState('idle');
+      showError(ErrorCode.SyncRestartFailed, error instanceof Error ? error.message : String(error));
+    }
+  } else {
+    // 監視中でない場合は接続テストのみ実行
+    // テスト中の通知を別々に管理
+    const progressNotification = vscode.window.withProgress(
+      { 
+        location: vscode.ProgressLocation.Notification, 
+        title: 'SFTP接続テスト中です...',
+        cancellable: false 
+      },
+      () => new Promise<void>(async resolve => {
+        await testSftpConnection();
+        resolve();
+      })
+    );
+    
+    // 通知が適切に終了するのを待つ
+    await progressNotification;
+  }
+}
+
 // 拡張機能のアクティベーション関数
 export function activate(context: vscode.ExtensionContext) {
   console.log('SFTP Sync拡張機能がアクティブになりました (activate)');
@@ -25,25 +85,7 @@ export function activate(context: vscode.ExtensionContext) {
       // ftpSync設定のいずれかが変更された場合
       if (event.affectsConfiguration('ftpSync')) {
         console.log('SFTP設定が変更されました');
-        
-        // 設定変更時にSFTP接続をリセット
-        closeSftpClient();
-        
-        // 監視中なら再起動を提案
-        if (isWatching()) {
-          vscode.window.showInformationMessage(
-            'SFTP設定が変更されました。同期を再起動しますか？', 
-            '再起動する'
-          ).then(selection => {
-            if (selection === '再起動する') {
-              watcherStop().then(() => {
-                watcherStart().catch(error => {
-                  showError(ErrorCode.SyncRestartFailed, error instanceof Error ? error.message : String(error));
-                });
-              });
-            }
-          });
-        }
+        handleConfigChange(statusBarController);
       }
     })
   );
@@ -139,30 +181,8 @@ export function activate(context: vscode.ExtensionContext) {
 
     await saveConfig(newcfg);
     vscode.window.showInformationMessage('SFTP設定を保存しました');
-    closeSftpClient();
-
-    const testSftp = await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: 'SFTP接続テスト中です...' },
-      () => safeGetSftpClient('接続テストに失敗しました')
-    );
-    if (testSftp) {
-      closeSftpClient();
-      vscode.window.showInformationMessage('SFTP接続テストに成功しました');
-    }
-
-    // 設定変更後は同期を再起動（動作中なら）
-    if (isWatching()) {
-      vscode.window.showInformationMessage('SFTP設定が変更されたため、同期を再起動します');
-      await watcherStop();
-      try {
-        await watcherStart();
-        if (isWatching()) {
-          statusBarController.setState('running');
-        }
-      } catch (error) {
-        showError(ErrorCode.SyncRestartFailed, error instanceof Error ? error.message : String(error));
-      }
-    }
+    
+    // 接続テストと同期状態の管理はhandleConfigChangeに任せる
   });
 
   // コマンド登録
