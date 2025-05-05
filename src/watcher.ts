@@ -14,6 +14,7 @@ const changedRelativePaths = new Map<string, 'add' | 'addDir' | 'change' | 'unli
 
 // 変更ファイルを記録
 function addChangedFile(relativePath: string, type: 'add' | 'addDir' | 'change' | 'unlink' | 'unlinkDir') {
+  console.log(`addChangedFile: ${relativePath} ${type}`);
   changedRelativePaths.set(relativePath, type);
 }
 
