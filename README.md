@@ -1,71 +1,49 @@
-# sync-vscode README
+# sync-vscode（SFTP Auto Sync）
 
-This is the README for your extension "sync-vscode". After writing up a brief description, we recommend including the following sections.
+SFTP Auto Syncは、VS Code上で編集・保存したファイルを指定のSFTPサーバーへ自動的にアップロードし、ローカルとリモートのフォルダを常に同期状態に保つ拡張機能です。
 
-## Features
+## 主な機能
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+- **自動監視＆アップロード**  : ファイル保存時に変更を検知し、差分のみをSFTPサーバーへ即時アップロード
+- **ステータスバー連携**      : 待機中／接続中／同期中／エラー状態をステータスバーに表示
+- **コマンド操作**            : コマンドパレットから同期の開始・停止や設定変更が可能
+- **接続テスト**              : 設定画面からSFTP接続の動作確認が実行可能
+- **ファイルサイズ制限**      : 転送可能なファイルサイズ上限を設定（デフォルト20MB）
 
-For example if there is an image subfolder under your extension project workspace:
+## 要求環境
 
-\!\[feature X\]\(images/feature-x.png\)
+- Visual Studio Code v1.99.0 以降
+- Node.js v14 以降
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+## インストール手順
 
-## Requirements
+1. リポジトリをクローンまたはVSIXパッケージを取得
+2. VS Codeのコマンドパレット（`Ctrl+Shift+P`）で「**拡張機能: VSIX からインストール**」を選択
+3. インストール後、VS Codeを再起動
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+## 使い方
 
-## Extension Settings
+1. コマンドパレットで「**SFTP Sync: SFTP設定**」を実行し、ホスト／ポート／ユーザー名／パスワード／リモートパスを入力して設定を保存
+2. コマンドパレットで「**SFTP Sync: 同期を開始**」を実行
+3. ファイルを編集して保存すると、自動的にリモートへアップロードされます
+4. 同期を停止したい場合は「**SFTP Sync: 同期を停止**」を実行
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+## 設定項目
 
-For example:
+| 設定キー                  | 説明                            | デフォルト   |
+|---------------------------|---------------------------------|-------------|
+| `ftpSync.host`            | SFTPサーバーのホスト名          | (空)        |
+| `ftpSync.port`            | SFTPサーバーのポート番号        | 22          |
+| `ftpSync.user`            | SFTPユーザー名                  | (空)        |
+| `ftpSync.password`        | SFTPパスワード                  | (空)        |
+| `ftpSync.remotePath`      | リモートのベースパス            | `/`         |
+| `ftpSync.maxUploadSize`   | 転送ファイルサイズ上限（バイト） | 20971520    |
 
-This extension contributes the following settings:
+## 既知の問題
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+- 大容量ファイル（デフォルト20MB以上）はアップロードできません。必要に応じて`ftpSync.maxUploadSize`を調整してください。
 
-## Known Issues
+## リリースノート
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
-
-## Release Notes
-
-Users appreciate release notes as you update your extension.
-
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+### 0.1.0
+- 初期リリース: SFTP自動同期機能を実装

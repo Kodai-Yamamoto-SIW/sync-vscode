@@ -1,9 +1,9 @@
 # Change Log
 
-All notable changes to the "sync-vscode" extension will be documented in this file.
-
-Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
+このファイルには「sync-vscode」拡張機能の主な変更点を記載します。
 
 ## [Unreleased]
+- ドキュメント（README）を日本語で充実化
 
-- Initial release
+## [0.1.0] - 2025-05-05
+- 初期リリース: SFTP自動同期機能を実装

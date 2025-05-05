@@ -1,48 +1,36 @@
-# Welcome to your VS Code Extension
+# vsc-extension-quickstart
 
-## What's in the folder
+このドキュメントは「sync-vscode」拡張機能の開発者向けクイックスタートガイドです。
 
-* This folder contains all of the files necessary for your extension.
-* `package.json` - this is the manifest file in which you declare your extension and command.
-  * The sample plugin registers a command and defines its title and command name. With this information VS Code can show the command in the command palette. It doesn’t yet need to load the plugin.
-* `src/extension.ts` - this is the main file where you will provide the implementation of your command.
-  * The file exports one function, `activate`, which is called the very first time your extension is activated (in this case by executing the command). Inside the `activate` function we call `registerCommand`.
-  * We pass the function containing the implementation of the command as the second parameter to `registerCommand`.
+## 開発環境のセットアップ
 
-## Setup
+1. リポジトリをクローン
+2. 必要な依存パッケージをインストール
+   ```sh
+   npm install
+   ```
+3. TypeScriptでビルド
+   ```sh
+   npm run compile
+   ```
+4. デバッグ実行
+   - VS CodeでF5キーを押して拡張機能開発ホストを起動
 
-* install the recommended extensions (amodio.tsl-problem-matcher, ms-vscode.extension-test-runner, and dbaeumer.vscode-eslint)
+## 主なnpmスクリプト
+- `npm run compile` : TypeScriptのビルド
+- `npm run watch`   : 監視付きビルド
+- `npm test`        : テスト実行
 
+## パッケージングと配布
+- vsceを使ってVSIXパッケージを作成
+  ```sh
+  npx vsce package
+  ```
+- 作成したVSIXファイルはVS Codeからインストール可能
 
-## Get up and running straight away
+## 注意事項
+- engines.vscodeのバージョンと@types/vscodeのバージョン整合性に注意
+- 機密情報（パスワード等）は公開しないこと
 
-* Press `F5` to open a new window with your extension loaded.
-* Run your command from the command palette by pressing (`Ctrl+Shift+P` or `Cmd+Shift+P` on Mac) and typing `Hello World`.
-* Set breakpoints in your code inside `src/extension.ts` to debug your extension.
-* Find output from your extension in the debug console.
-
-## Make changes
-
-* You can relaunch the extension from the debug toolbar after changing code in `src/extension.ts`.
-* You can also reload (`Ctrl+R` or `Cmd+R` on Mac) the VS Code window with your extension to load your changes.
-
-
-## Explore the API
-
-* You can open the full set of our API when you open the file `node_modules/@types/vscode/index.d.ts`.
-
-## Run tests
-
-* Install the [Extension Test Runner](https://marketplace.visualstudio.com/items?itemName=ms-vscode.extension-test-runner)
-* Run the "watch" task via the **Tasks: Run Task** command. Make sure this is running, or tests might not be discovered.
-* Open the Testing view from the activity bar and click the Run Test" button, or use the hotkey `Ctrl/Cmd + ; A`
-* See the output of the test result in the Test Results view.
-* Make changes to `src/test/extension.test.ts` or create new test files inside the `test` folder.
-  * The provided test runner will only consider files matching the name pattern `**.test.ts`.
-  * You can create folders inside the `test` folder to structure your tests any way you want.
-
-## Go further
-
-* Reduce the extension size and improve the startup time by [bundling your extension](https://code.visualstudio.com/api/working-with-extensions/bundling-extension).
-* [Publish your extension](https://code.visualstudio.com/api/working-with-extensions/publishing-extension) on the VS Code extension marketplace.
-* Automate builds by setting up [Continuous Integration](https://code.visualstudio.com/api/working-with-extensions/continuous-integration).
+---
+このファイルはユーザー向けではありません。
