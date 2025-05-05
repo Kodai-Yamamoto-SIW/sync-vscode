@@ -5,13 +5,16 @@
   "version": "0.1.0",
   "publisher": "Kodai-Yamamoto-SIW",
   "engines": {
-    "vscode": "^1.38.0"
+    "vscode": "^1.46.0"
   },
   "categories": [
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onCommand:ftp-sync.startSync",
+    "onCommand:ftp-sync.stopSync",
+    "onCommand:ftp-sync.configureSettings"
   ],
   "main": "./out/extension.js",
   "repository": {
@@ -70,19 +73,20 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js",
-    "build": "tsc -w"
-  },
+      "compile": "tsc -p ./",
+      "watch": "tsc -watch -p ./",
+      "pretest": "npm run compile && npm run lint",
+      "lint": "eslint src --ext ts",
+      "test": "node ./out/test/runTest.js",
+      "build": "tsc -w",
+      
+      "package:prod": "npm run compile && npm prune --omit=dev && npx @vscode/vsce package && npm install"
+    },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "^16.18.71",
     "@types/ssh2": "^1.15.5",
-    "@types/vscode": "^1.38.0",
+    "@types/vscode": "^1.46.0",
     "@typescript-eslint/eslint-plugin": "^5.1.0",
     "@typescript-eslint/parser": "^5.1.0",
     "eslint": "^8.1.0",
