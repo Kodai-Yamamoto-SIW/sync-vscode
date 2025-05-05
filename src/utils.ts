@@ -15,6 +15,12 @@ export function showSftpError(error: unknown, fallbackPrefix?: string) {
     errMsg.includes('All configured authentication methods failed')
   ) {
     showError(ErrorCode.AuthFailed);
+  } else if (
+    errMsg.includes('Timed out') || 
+    errMsg.includes('timeout') || 
+    errMsg.includes('handshake')
+  ) {
+    showError(ErrorCode.ConnectionTimeout);
   } else if (fallbackPrefix) {
     showError(ErrorCode.Unknown, fallbackPrefix);
   } else {
