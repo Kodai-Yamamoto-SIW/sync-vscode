@@ -3,6 +3,7 @@
   "displayName": "SFTP Auto Sync",
   "description": "変更されたファイルを自動的にSFTPサーバーへアップロードする拡張機能",
   "version": "0.1.0",
+  "publisher": "Kodai-Yamamoto-SIW",
   "engines": {
     "vscode": "^1.38.0"
   },
