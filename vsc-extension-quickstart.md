@@ -22,9 +22,9 @@
 - `npm test`        : テスト実行
 
 ## パッケージングと配布
-- vsceを使ってVSIXパッケージを作成
+- パッケージ用のコマンドを使ってVSIXパッケージを作成
   ```sh
-  npx vsce package
+  npm run package:prod
   ```
 - 作成したVSIXファイルはVS Codeからインストール可能
 
