@@ -18,19 +18,48 @@ export function activate(context: vscode.ExtensionContext) {
   statusBarControllerInstance = statusBarController;
   context.subscriptions.push(statusBarController);
 
-  // 設定の読み込み
-  let config = loadConfig();
+  
+  // 設定変更イベントをリッスン
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration(event => {
+      // ftpSync設定のいずれかが変更された場合
+      if (event.affectsConfiguration('ftpSync')) {
+        console.log('SFTP設定が変更されました');
+        
+        // 設定変更時にSFTP接続をリセット
+        closeSftpClient();
+        
+        // 監視中なら再起動を提案
+        if (isWatching()) {
+          vscode.window.showInformationMessage(
+            'SFTP設定が変更されました。同期を再起動しますか？', 
+            '再起動する'
+          ).then(selection => {
+            if (selection === '再起動する') {
+              watcherStop().then(() => {
+                watcherStart().catch(error => {
+                  showError(ErrorCode.SyncRestartFailed, error instanceof Error ? error.message : String(error));
+                });
+              });
+            }
+          });
+        }
+      }
+    })
+  );
 
   // コマンドの登録
   let startSyncCommand = vscode.commands.registerCommand('ftp-sync.startSync', async () => {
     // 同期開始コマンド
+    // 設定の読み込み
+    const config = loadConfig();
 
     // 設定が完了しているか確認
     if (!config.host || !config.user) {
       showError(ErrorCode.IncompleteSettings);
       await vscode.commands.executeCommand('ftp-sync.configureSettings');
-      config = loadConfig();
-      if (!config.host || !config.user) {
+      const newcfg = loadConfig();
+      if (!newcfg.host || !newcfg.user) {
         return;
       }
     }
@@ -57,6 +86,9 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   let configureCommand = vscode.commands.registerCommand('ftp-sync.configureSettings', async () => {
+    // 設定を毎回新しく読み込む（キャッシュを使わない）
+    const config = loadConfig();
+    
     // SFTP設定の入力
     const host = await vscode.window.showInputBox({
       prompt: 'SFTPホスト名を入力してください',
@@ -96,7 +128,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (!remotePath) return;
 
     // 設定の保存
-    config = {
+    const newcfg = {
       host,
       port: portNumber,
       user,
@@ -105,7 +137,7 @@ export function activate(context: vscode.ExtensionContext) {
       maxUploadSize: config.maxUploadSize
     };
 
-    await saveConfig(config);
+    await saveConfig(newcfg);
     vscode.window.showInformationMessage('SFTP設定を保存しました');
     closeSftpClient();
 

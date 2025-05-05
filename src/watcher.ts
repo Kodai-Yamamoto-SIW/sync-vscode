@@ -24,6 +24,7 @@ async function syncChangedFiles() {
   isSyncing = true;
   try {
     if (changedRelativePaths.size === 0) return;
+    // 常に最新の設定を取得
     const config = loadConfig();
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) return;
@@ -130,6 +131,7 @@ async function syncChangedFiles() {
 }
 
 export async function startWatching() {
+  // 常に最新の設定を取得
   const config = loadConfig();
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (!workspaceFolders) {
