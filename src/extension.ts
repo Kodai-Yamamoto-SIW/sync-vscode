@@ -36,6 +36,9 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     try {
+      // 同期開始中の状態に変更
+      statusBarController.setState('starting');
+      
       await watcherStart();
       if (isWatching()) {
         statusBarController.setState('running');
