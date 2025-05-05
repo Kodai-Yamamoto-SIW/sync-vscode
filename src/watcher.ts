@@ -2,11 +2,12 @@ import * as vscode from 'vscode';
 import * as pathUtil from 'path';
 import * as fs from 'fs';
 import { safeGetSftpClient, closeSftpClient } from './sftpClient';
-import { sftpMkdirRecursive, listRemoteFilesRecursiveRelative, listLocalFilesRecursiveRelative, handleDelete, sftpRmdirRecursive } from './sftpUtils';
+import { sftpMkdirRecursive, listRemoteFilesRecursiveRelative, listLocalFilesRecursiveRelative, handleDelete, sftpRmdirRecursive, SftpListError } from './sftpUtils';
 import { toPosixPath } from './utils';
 import { loadConfig } from './config';
 import { ErrorCode, showError } from './errors';
 import { statusBarControllerInstance } from './extension';
+import { showSftpError } from './utils';
 
 let watcher: vscode.FileSystemWatcher | undefined;
 let isSyncing = false;
@@ -133,7 +134,7 @@ async function syncChangedFiles() {
 
 export async function startWatching() {
   // 常に最新の設定を取得
-  const config = loadConfig();
+  let config = loadConfig();
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (!workspaceFolders) {
     showError(ErrorCode.WorkspaceMissing);
@@ -148,16 +149,66 @@ export async function startWatching() {
   }
 
   try {
-    const sftp = await safeGetSftpClient('同期の開始に失敗しました');
+    // --- 初期SFTPクライアント取得 --- 
+    let sftp = await safeGetSftpClient('同期の開始に失敗しました');
     if (!sftp) {
-      throw new Error('同期を開始できませんでした');
+      // 最初のクライアント取得失敗は致命的エラー
+      throw new Error('SFTPクライアントの初期化に失敗しました。設定を確認してください。');
     }
 
-    // リモートパス初期化と権限チェック
-    await sftpMkdirRecursive(sftp, config.remotePath_posix);
+    // --- リモートパス初期化とリモートファイルリスト取得 (再試行ループ) --- 
+    let remotePaths: string[] = [];
+    let initSuccess = false;
 
-    // 初期同期: リモートにのみ存在するファイル/フォルダを削除
-    const remotePaths = await listRemoteFilesRecursiveRelative(config.remotePath_posix);
+    while (!initSuccess) {
+      try {
+        // 常に最新の設定でパス初期化とリスト取得を試行
+        config = loadConfig();
+        console.log(`リモートパス初期化: ${config.remotePath_posix}`);
+        
+        // 1. リモートパス初期化 - 権限エラーが発生したら SftpListError が投げられる
+        await sftpMkdirRecursive(sftp, config.remotePath_posix);
+        
+        // 2. リモートファイルリスト取得 - 権限エラーが発生したら SftpListError が投げられる
+        remotePaths = await listRemoteFilesRecursiveRelative(config.remotePath_posix);
+        
+        // 両方成功したらループを抜ける
+        initSuccess = true;
+        console.log(`リモートパス初期化とファイルリスト取得が成功しました。${remotePaths.length}アイテム検出。`);
+      } catch (error) {
+        if (error instanceof SftpListError) {
+          console.warn(`リモートパスの初期化またはリスト取得中にエラー発生 (Path: ${error.path}, PermissionError: ${error.isPermissionError}): ${error.message}`);
+          
+          // SftpListError の場合、ユーザーに再入力を促す
+          const settingsUpdated = await showSftpError(error, 
+            `パス「${error.path}」へのアクセス中にエラーが発生しました。設定を確認・修正してください。`
+          );
+
+          if (settingsUpdated) {
+            // 設定が更新された場合、ループを継続して再試行
+            console.log('設定が更新されたため、パス初期化とファイルリスト取得を再試行します。');
+            
+            // 新しい接続情報を反映させるために、既存のクライアントを閉じて再取得
+            closeSftpClient(); 
+            sftp = await safeGetSftpClient('設定更新後のSFTPクライアント再取得に失敗しました');
+            if (!sftp) {
+              throw new Error('設定更新後、SFTPクライアントの再接続に失敗しました。');
+            }
+            continue; // while ループを継続
+          } else {
+            // ユーザーがキャンセルした場合、エラーをスローして同期開始を中断
+            console.log('ユーザーが設定更新をキャンセルしました。同期開始を中断します。');
+            throw new Error('リモートパス初期化/ファイルリスト取得中にユーザーがキャンセルしました。');
+          }
+        } else {
+          // SftpListError 以外の予期せぬエラーは、そのまま上位に投げる
+          console.error('リモートパス初期化/ファイルリスト取得中に予期せぬエラーが発生しました:', error);
+          throw error;
+        }
+      }
+    } // end while loop
+
+    // --- リスト取得成功後の初期同期処理 --- 
     const localPaths = await listLocalFilesRecursiveRelative(workspaceRoot);
 
     // ローカルとリモートのパスを正規化して比較
@@ -192,7 +243,7 @@ export async function startWatching() {
         } else {
           console.log(`初期同期: アップロードファイル: ${rel}`);
           await new Promise<void>((resolve, reject) => {
-            sftp.fastPut(localFull, remoteFull, err => err ? reject(err) : resolve());
+            sftp!.fastPut(localFull, remoteFull, err => err ? reject(err) : resolve());
           });
           console.log(`✔ 初期同期アップロード完了: ${rel}`);
         }
@@ -212,12 +263,12 @@ export async function startWatching() {
       const remoteFull = pathUtil.posix.join(config.remotePath_posix, rel);
       try {
         await new Promise<void>((resolve, reject) => {
-          sftp.stat(remoteFull, (err, stats) => {
+          sftp!.stat(remoteFull, (err, stats) => {
             if (err) return resolve();
             const remoteMtimeMs = stats.mtime * 1000;
             if (statLocal.mtimeMs > remoteMtimeMs) {
               console.log(`初期同期: 更新ファイルアップロード: ${rel}`);
-              sftp.fastPut(localFull, remoteFull, err2 => err2 ? reject(err2) : resolve());
+              sftp!.fastPut(localFull, remoteFull, err2 => err2 ? reject(err2) : resolve());
             } else {
               resolve();
             }
@@ -265,10 +316,11 @@ export async function startWatching() {
     console.log('startWatching: ファイル変更時に即時同期モード');
     vscode.window.showInformationMessage('SFTP同期を開始しました');
   } catch (error) {
+    // ループ内外からのエラーをここでキャッチして同期開始失敗として処理
     await stopWatching();
     const errMsg = error instanceof Error ? error.message : String(error);
     showError(ErrorCode.SyncStartFailed, errMsg);
-    return;
+    console.error(`同期開始プロセス全体でエラー: ${errMsg}`);
   }
 }
 

@@ -10,23 +10,23 @@ export async function showSftpError(error: unknown, fallbackPrefix?: string): Pr
   const host = cfg.host;
 
   if ((error as any).code === 'ENOTFOUND' || errMsg.includes('getaddrinfo') || errMsg.includes('ECONNREFUSED')) {
-    showError(ErrorCode.HostConnectionFailed);
+    showError(ErrorCode.HostConnectionFailed, fallbackPrefix);
     return await promptHostReentry();
   } else if (
     errMsg.includes('No such user') ||
     errMsg.includes('All configured authentication methods failed')
   ) {
-    showError(ErrorCode.AuthFailed);
+    showError(ErrorCode.AuthFailed, fallbackPrefix);
     return await promptAuthReentry();
   } else if (
     errMsg.includes('Timed out') || 
     errMsg.includes('timeout') || 
     errMsg.includes('handshake')
   ) {
-    showError(ErrorCode.ConnectionTimeout);
+    showError(ErrorCode.ConnectionTimeout, fallbackPrefix);
     return await promptPortReentry();
-  } else if (errMsg.includes('Permission denied') && fallbackPrefix?.includes('リモートファイルリスト')) {
-    showError(ErrorCode.PermissionDenied);
+  } else if (errMsg.includes('Permission denied')) {
+    showError(ErrorCode.PermissionDenied, fallbackPrefix);
     return await promptRemotePathReentry();
   } else if (fallbackPrefix) {
     showError(ErrorCode.Unknown, fallbackPrefix);
